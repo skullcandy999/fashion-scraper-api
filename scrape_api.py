@@ -2,25 +2,18 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 import requests
 from requests.adapters import HTTPAdapter, Retry
-import hashlib
-import concurrent.futures
-import base64
 
 app = Flask(__name__)
 CORS(app)
 
 session = requests.Session()
-retries = Retry(total=3, backoff_factor=0.4, status_forcelist=(429,500,502,503,504))
+retries = Retry(total=2, backoff_factor=0.3, status_forcelist=(429,500,502,503,504))
 session.mount("https://", HTTPAdapter(max_retries=retries))
 session.headers.update({
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
 })
 
-TIMEOUT = 12
-MIN_BYTES = 8000
-
-def sha1(b: bytes) -> str:
-    return hashlib.sha1(b).hexdigest()
+TIMEOUT = 5  # Brži timeout jer samo proveravamo URL
 
 @app.route('/health', methods=['GET'])
 def health():
@@ -43,43 +36,26 @@ def scrape_boss():
         num, color = parts[0], parts[-1]
         
         prefixes = ["hbeu", "hbna"]
-        suffixes = ["200","245","300","340","240","210","201","230","220","250","260","270","280","100"]
+        suffixes = ["200","245","300","340","240","210","201","230","220","250"]
         
         img_host = "https://images.hugoboss.com/is/image/boss"
         images = []
-        seen_hashes = set()
         
-        def try_url(prefix, suf):
-            code = f"{prefix}{num}_{color}"
-            url = f"{img_host}/{code}_{suf}?wid=2000&qlt=90"
-            try:
-                r = session.get(url, timeout=TIMEOUT)
-                if r.status_code == 200 and len(r.content) > MIN_BYTES:
-                    h = sha1(r.content)
-                    if h not in seen_hashes:
-                        seen_hashes.add(h)
-                        return {
-                            "url": url,
-                            "base64": base64.b64encode(r.content).decode('utf-8'),
-                            "size": len(r.content),
-                            "suffix": suf
-                        }
-            except:
-                pass
-            return None
-        
-        with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
-            futures = []
-            for pref in prefixes:
-                for suf in suffixes:
-                    if len(images) >= max_images:
-                        break
-                    futures.append(executor.submit(try_url, pref, suf))
-            
-            for future in concurrent.futures.as_completed(futures):
-                result = future.result()
-                if result and len(images) < max_images:
-                    images.append(result)
+        for pref in prefixes:
+            if len(images) >= max_images:
+                break
+            for suf in suffixes:
+                if len(images) >= max_images:
+                    break
+                code = f"{pref}{num}_{color}"
+                url = f"{img_host}/{code}_{suf}?wid=2000&qlt=90"
+                try:
+                    # Samo HEAD request - ne downloadujemo sliku!
+                    r = session.head(url, timeout=TIMEOUT, allow_redirects=True)
+                    if r.status_code == 200:
+                        images.append({"url": url, "index": len(images) + 1})
+                except:
+                    pass
         
         return jsonify({
             "sku": sku,
@@ -100,49 +76,35 @@ def scrape_maje():
         if not sku:
             return jsonify({"error": "SKU required"}), 400
         
-        base_code = sku
-        if base_code.startswith("MA"):
-            base_code = base_code[2:]
-        elif base_code.startswith("MAMF"):
-            base_code = base_code.replace("MAMF", "MF")
+        # Tvoja logika čišćenja
+        base_code = sku.replace("MA", "")
         
-        base_url_hi = "https://ca.maje.com/dw/image/v2/AAON_PRD/on/demandware.static/-/Sites-maje-master-catalog/default/images/hi-res/"
-        base_url_pack = "https://ca.maje.com/dw/image/v2/AAON_PRD/on/demandware.static/-/Sites-maje-master-catalog/default/images/packshot/"
+        base_url = "https://ca.maje.com/dw/image/v2/AAON_PRD/on/demandware.static/-/Sites-maje-master-catalog/default/"
         file_prefix = f"Maje_{base_code}"
         
         images = []
-        seen_hashes = set()
         
+        # Model slike (1-4)
         for i in range(1, 5):
             if len(images) >= max_images:
                 break
-            url = f"{base_url_hi}{file_prefix}_F_{i}.jpg?sw=1600&sh=2000&sm=fit"
+            file_suffix = f"{file_prefix}_F_{i}.jpg"
+            url = f"{base_url}images/hi-res/{file_suffix}?sw=1600&sh=2000"
             try:
-                r = session.get(url, timeout=TIMEOUT)
-                if r.status_code == 200 and len(r.content) > MIN_BYTES:
-                    h = sha1(r.content)
-                    if h not in seen_hashes:
-                        seen_hashes.add(h)
-                        images.append({
-                            "url": url,
-                            "base64": base64.b64encode(r.content).decode('utf-8'),
-                            "size": len(r.content),
-                            "type": "model"
-                        })
+                r = session.head(url, timeout=TIMEOUT, allow_redirects=True)
+                if r.status_code == 200:
+                    images.append({"url": url, "type": "model", "index": i})
             except:
                 pass
         
+        # Packshot (5)
         if len(images) < max_images:
-            url = f"{base_url_pack}{file_prefix}_F_P.jpg?sw=1600&sh=2000&sm=fit"
+            packshot_suffix = f"{file_prefix}_F_P.jpg"
+            url = f"{base_url}images/packshot/{packshot_suffix}?sw=1600&sh=2000"
             try:
-                r = session.get(url, timeout=TIMEOUT)
-                if r.status_code == 200 and len(r.content) > MIN_BYTES:
-                    images.append({
-                        "url": url,
-                        "base64": base64.b64encode(r.content).decode('utf-8'),
-                        "size": len(r.content),
-                        "type": "packshot"
-                    })
+                r = session.head(url, timeout=TIMEOUT, allow_redirects=True)
+                if r.status_code == 200:
+                    images.append({"url": url, "type": "packshot", "index": 5})
             except:
                 pass
         
