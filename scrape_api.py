@@ -1,6 +1,8 @@
 """
-Fashion Scraper API - Improved Version
-Validates images actually exist before returning URLs
+Fashion Scraper API - v2
+- BOSS: suffix 100 is LAST (product photo without model)
+- Proper image ordering
+- Better validation
 """
 
 from flask import Flask, request, jsonify
@@ -8,8 +10,6 @@ from flask_cors import CORS
 import requests
 from requests.adapters import HTTPAdapter, Retry
 import hashlib
-import concurrent.futures
-from functools import lru_cache
 import time
 
 app = Flask(__name__)
@@ -38,36 +38,22 @@ def sha1_hash(content: bytes) -> str:
     return hashlib.sha1(content).hexdigest()
 
 
-def validate_image_url(url: str) -> tuple[bool, bytes | None]:
+def validate_image_url(url: str) -> tuple:
     """
     Check if URL returns a valid image
-    Returns: (is_valid, content)
+    Returns: (is_valid, content, content_hash)
     """
     try:
         response = session.get(url, timeout=TIMEOUT)
         if response.status_code == 200:
             content_type = response.headers.get("Content-Type", "").lower()
             if "image" in content_type and len(response.content) > MIN_BYTES:
-                return True, response.content
-        return False, None
-    except Exception:
-        return False, None
-
-
-def validate_image_url_head(url: str) -> bool:
-    """
-    Quick HEAD request to check if image exists
-    Faster than full GET, but less reliable
-    """
-    try:
-        response = session.head(url, timeout=5, allow_redirects=True)
-        if response.status_code == 200:
-            content_type = response.headers.get("Content-Type", "").lower()
-            content_length = int(response.headers.get("Content-Length", 0))
-            return "image" in content_type and content_length > MIN_BYTES
-        return False
-    except Exception:
-        return False
+                img_hash = sha1_hash(response.content)
+                return True, response.content, img_hash
+        return False, None, None
+    except Exception as e:
+        print(f"Error validating {url}: {e}")
+        return False, None, None
 
 
 # ===================== HEALTH CHECK =====================
@@ -90,17 +76,21 @@ def scrape_boss():
     """
     Scrape Hugo Boss images with validation
     Expected SKU format: "HB50549829 001" or "50549829 001"
+    
+    IMPORTANT: suffix 100 (product photo) goes LAST
+    Model photos (200, 300, etc.) come first
     """
     try:
         data = request.json
         sku = data.get('sku', '').strip()
-        max_images = min(data.get('max_images', 5), 10)  # Cap at 10
-        validate = data.get('validate', True)  # Option to skip validation
+        max_images = min(data.get('max_images', 5), 10)
+        validate = data.get('validate', True)
         
         if not sku:
             return jsonify({"error": "SKU required"}), 400
         
-        # Parse SKU
+        # Parse SKU - keep original format for naming
+        original_sku = sku
         clean_sku = sku.replace("HB", "").strip()
         parts = clean_sku.split()
         
@@ -110,61 +100,68 @@ def scrape_boss():
         num = parts[0]
         color = parts[-1]
         
+        # Format SKU for file naming: "HB50468239 202" (with space before color)
+        formatted_sku = f"HB{num} {color}"
+        
         # Configuration
         prefixes = ["hbeu", "hbna"]
-        suffixes = [
-            "200", "245", "300", "340", "240", "210", "201", 
-            "230", "220", "250", "260", "270", "280",
-            "100", "110", "120", "130", "140", "150"
-        ]
-        img_host = "https://images.hugoboss.com/is/image/boss"
         
-        # Generate all possible URLs
-        candidate_urls = []
-        for pref in prefixes:
-            for suf in suffixes:
-                code = f"{pref}{num}_{color}"
-                url = f"{img_host}/{code}_{suf}?wid=2000&qlt=90"
-                candidate_urls.append(url)
+        # IMPORTANT: Model shots FIRST, product shot (100) LAST
+        model_suffixes = ["200", "300", "340", "240", "210", "201", "230", "220", "250", "260", "270", "280"]
+        product_suffixes = ["100", "110", "120", "130", "140", "150"]  # Product shots - go last
+        
+        img_host = "https://images.hugoboss.com/is/image/boss"
         
         images = []
         seen_hashes = set()
         
-        if validate:
-            # Validate URLs in parallel for speed
-            def check_url(url):
-                is_valid, content = validate_image_url(url)
-                if is_valid and content:
-                    img_hash = sha1_hash(content)
-                    return url, img_hash
-                return None, None
+        def try_url(pref, suf):
+            """Try to get image from URL, return image data if valid"""
+            code = f"{pref}{num}_{color}"
+            url = f"{img_host}/{code}_{suf}?$large$=&fit=crop,1&align=1,1&bgcolor=ebebeb&wid=1600"
             
-            with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
-                futures = {executor.submit(check_url, url): url for url in candidate_urls}
-                
-                for future in concurrent.futures.as_completed(futures):
-                    if len(images) >= max_images:
-                        break
-                    
-                    url, img_hash = future.result()
-                    if url and img_hash and img_hash not in seen_hashes:
-                        seen_hashes.add(img_hash)
-                        images.append({
-                            "url": url,
-                            "index": len(images) + 1,
-                            "hash": img_hash[:8]  # Short hash for reference
-                        })
-        else:
-            # No validation - just return generated URLs (faster but less reliable)
-            for url in candidate_urls[:max_images]:
-                images.append({
-                    "url": url,
-                    "index": len(images) + 1,
-                    "validated": False
-                })
+            if validate:
+                is_valid, content, img_hash = validate_image_url(url)
+                if is_valid and img_hash not in seen_hashes:
+                    seen_hashes.add(img_hash)
+                    return {"url": url, "suffix": suf, "hash": img_hash[:8]}
+            else:
+                return {"url": url, "suffix": suf, "validated": False}
+            return None
+        
+        # First: try model shots (200, 300, etc.)
+        for pref in prefixes:
+            if len(images) >= max_images - 1:  # Leave room for product shot
+                break
+            for suf in model_suffixes:
+                if len(images) >= max_images - 1:
+                    break
+                result = try_url(pref, suf)
+                if result:
+                    images.append(result)
+        
+        # Last: try product shot (100) - always try to add this as last image
+        for pref in prefixes:
+            if len(images) >= max_images:
+                break
+            for suf in product_suffixes:
+                if len(images) >= max_images:
+                    break
+                result = try_url(pref, suf)
+                if result:
+                    images.append(result)
+                    break  # Only need one product shot
+            if len(images) >= max_images:
+                break
+        
+        # Add index numbers for naming
+        for idx, img in enumerate(images):
+            img["index"] = idx + 1
+            img["filename"] = f"{formatted_sku}-{idx + 1}"
         
         return jsonify({
-            "sku": sku,
+            "sku": original_sku,
+            "formatted_sku": formatted_sku,
             "parsed": {"number": num, "color": color},
             "images": images,
             "count": len(images),
@@ -193,62 +190,70 @@ def scrape_maje():
             return jsonify({"error": "SKU required"}), 400
         
         # Parse SKU - remove MA prefix
+        original_sku = sku
         base_code = sku.replace("MA", "")
         file_prefix = f"Maje_{base_code}"
         
         base_url = "https://ca.maje.com/dw/image/v2/AAON_PRD/on/demandware.static/-/Sites-maje-master-catalog/default/"
         
-        # Generate candidate URLs
-        candidate_urls = []
-        
-        # Model shots (1-4)
-        for i in range(1, 5):
-            file_suffix = f"{file_prefix}_F_{i}.jpg"
-            url = f"{base_url}images/hi-res/{file_suffix}?sw=1600&sh=2000"
-            candidate_urls.append({"url": url, "type": "model", "index": i})
-        
-        # Packshot
-        packshot_suffix = f"{file_prefix}_F_P.jpg"
-        packshot_url = f"{base_url}images/packshot/{packshot_suffix}?sw=1600&sh=2000"
-        candidate_urls.append({"url": packshot_url, "type": "packshot", "index": 5})
-        
-        # Additional variants (V1, V2, etc.)
-        for v in range(1, 4):
-            variant_suffix = f"{file_prefix}_V{v}.jpg"
-            variant_url = f"{base_url}images/hi-res/{variant_suffix}?sw=1600&sh=2000"
-            candidate_urls.append({"url": variant_url, "type": "variant", "index": 5 + v})
-        
         images = []
         seen_hashes = set()
         
-        if validate:
-            for item in candidate_urls:
-                if len(images) >= max_images:
-                    break
+        # Model shots (1-4)
+        for i in range(1, 5):
+            if len(images) >= max_images:
+                break
                 
-                is_valid, content = validate_image_url(item["url"])
-                if is_valid and content:
-                    img_hash = sha1_hash(content)
-                    if img_hash not in seen_hashes:
-                        seen_hashes.add(img_hash)
-                        images.append({
-                            "url": item["url"],
-                            "type": item["type"],
-                            "index": len(images) + 1,
-                            "hash": img_hash[:8]
-                        })
-        else:
-            # No validation
-            for item in candidate_urls[:max_images]:
+            file_suffix = f"{file_prefix}_F_{i}.jpg"
+            url = f"{base_url}images/hi-res/{file_suffix}?sw=1600&sh=2000"
+            
+            if validate:
+                is_valid, content, img_hash = validate_image_url(url)
+                if is_valid and img_hash not in seen_hashes:
+                    seen_hashes.add(img_hash)
+                    images.append({
+                        "url": url,
+                        "type": "model",
+                        "index": len(images) + 1,
+                        "hash": img_hash[:8],
+                        "filename": f"{original_sku}-{len(images) + 1}"
+                    })
+            else:
                 images.append({
-                    "url": item["url"],
-                    "type": item["type"],
+                    "url": url,
+                    "type": "model",
                     "index": len(images) + 1,
-                    "validated": False
+                    "validated": False,
+                    "filename": f"{original_sku}-{len(images) + 1}"
+                })
+        
+        # Packshot (product photo) - goes last
+        if len(images) < max_images:
+            packshot_suffix = f"{file_prefix}_F_P.jpg"
+            packshot_url = f"{base_url}images/packshot/{packshot_suffix}?sw=1600&sh=2000"
+            
+            if validate:
+                is_valid, content, img_hash = validate_image_url(packshot_url)
+                if is_valid and img_hash not in seen_hashes:
+                    seen_hashes.add(img_hash)
+                    images.append({
+                        "url": packshot_url,
+                        "type": "packshot",
+                        "index": len(images) + 1,
+                        "hash": img_hash[:8],
+                        "filename": f"{original_sku}-{len(images) + 1}"
+                    })
+            else:
+                images.append({
+                    "url": packshot_url,
+                    "type": "packshot",
+                    "index": len(images) + 1,
+                    "validated": False,
+                    "filename": f"{original_sku}-{len(images) + 1}"
                 })
         
         return jsonify({
-            "sku": sku,
+            "sku": original_sku,
             "parsed": {"base_code": base_code, "file_prefix": file_prefix},
             "images": images,
             "count": len(images),
@@ -259,35 +264,11 @@ def scrape_maje():
         return jsonify({"error": str(e), "type": type(e).__name__}), 500
 
 
-# ===================== GENERIC SCRAPER (for future brands) =====================
-
-@app.route('/scrape', methods=['POST'])
-def scrape_generic():
-    """
-    Generic endpoint - routes to correct scraper based on brand
-    """
-    try:
-        data = request.json
-        brand = data.get('brand', '').upper()
-        
-        if brand == 'BOSS':
-            return scrape_boss()
-        elif brand == 'MAJE':
-            return scrape_maje()
-        else:
-            return jsonify({"error": f"Unknown brand: {brand}. Supported: BOSS, MAJE"}), 400
-    
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
 # ===================== DEBUG ENDPOINT =====================
 
 @app.route('/debug-sku', methods=['POST'])
 def debug_sku():
-    """
-    Debug endpoint to see how SKU is parsed without making requests
-    """
+    """Debug endpoint to see how SKU is parsed"""
     data = request.json
     sku = data.get('sku', '')
     brand = data.get('brand', 'BOSS').upper()
@@ -297,19 +278,24 @@ def debug_sku():
     if brand == 'BOSS':
         clean_sku = sku.replace("HB", "").strip()
         parts = clean_sku.split()
+        num = parts[0] if parts else None
+        color = parts[-1] if len(parts) >= 2 else None
+        formatted_sku = f"HB{num} {color}" if num and color else None
+        
         result["parsed"] = {
             "clean_sku": clean_sku,
             "parts": parts,
-            "number": parts[0] if parts else None,
-            "color": parts[-1] if len(parts) >= 2 else None
+            "number": num,
+            "color": color,
+            "formatted_sku": formatted_sku
         }
         
-        if len(parts) >= 2:
-            num, color = parts[0], parts[-1]
-            result["sample_urls"] = [
-                f"https://images.hugoboss.com/is/image/boss/hbeu{num}_{color}_200?wid=2000&qlt=90",
-                f"https://images.hugoboss.com/is/image/boss/hbna{num}_{color}_200?wid=2000&qlt=90"
-            ]
+        if num and color:
+            result["sample_urls"] = {
+                "model_shot": f"https://images.hugoboss.com/is/image/boss/hbeu{num}_{color}_200?$large$=&fit=crop,1&align=1,1&bgcolor=ebebeb&wid=1600",
+                "product_shot": f"https://images.hugoboss.com/is/image/boss/hbeu{num}_{color}_100?$large$=&fit=crop,1&align=1,1&bgcolor=ebebeb&wid=1600"
+            }
+            result["filename_example"] = f"{formatted_sku}-1"
     
     elif brand == 'MAJE':
         base_code = sku.replace("MA", "")
@@ -318,9 +304,11 @@ def debug_sku():
             "base_code": base_code,
             "file_prefix": file_prefix
         }
-        result["sample_urls"] = [
-            f"https://ca.maje.com/dw/image/v2/AAON_PRD/on/demandware.static/-/Sites-maje-master-catalog/default/images/hi-res/{file_prefix}_F_1.jpg?sw=1600&sh=2000"
-        ]
+        result["sample_urls"] = {
+            "model_shot": f"https://ca.maje.com/dw/image/v2/AAON_PRD/on/demandware.static/-/Sites-maje-master-catalog/default/images/hi-res/{file_prefix}_F_1.jpg?sw=1600&sh=2000",
+            "packshot": f"https://ca.maje.com/dw/image/v2/AAON_PRD/on/demandware.static/-/Sites-maje-master-catalog/default/images/packshot/{file_prefix}_F_P.jpg?sw=1600&sh=2000"
+        }
+        result["filename_example"] = f"{sku}-1"
     
     return jsonify(result)
 
