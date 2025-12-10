@@ -161,11 +161,15 @@ def scrape_maje():
 # ===================== MANGO (from mango.py) =====================
 @app.route('/scrape-mango', methods=['POST'])
 def scrape_mango():
-    """EXACT logic from user's mango.py with proper headers"""
+    """
+    MANGO - NO VALIDATION
+    Returns 10+ candidate URLs in priority order (same as local Python)
+    n8n downloads all, filters valid, takes first 5, renumbers to -1,-2,-3,-4,-5
+    """
     try:
         data = request.json
         sku = data.get('sku', '').strip()
-        max_images = data.get('max_images', 5)
+        max_images = data.get('max_images', 10)  # Return MORE so n8n can filter
         
         if not sku:
             return jsonify({"error": "SKU required"}), 400
@@ -177,47 +181,44 @@ def scrape_mango():
         number, color = m.group(1), m.group(2)
         their_code = f"{number}_{color}"
         
-        # EXACT headers from mango.py
-        mango_session = make_session({
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-            "Referer": "https://shop.mango.com/",
-            "Connection": "keep-alive"
-        })
-        
         BASE_IMG = "https://shop.mango.com/assets/rcs/pics/static/T2/fotos"
         IMG_PARAM = "?imwidth=2048&imdensity=1"
-        MIN_MANGO = 9000  # from mango.py
         
-        # EXACT URL order from mango.py candidate_image_urls()
+        # EXACT order from your mango.py candidate_image_urls()
         candidate_urls = []
+        
+        # 1. Packshot first
         candidate_urls.append(f"{BASE_IMG}/S/{their_code}.jpg{IMG_PARAM}")
+        
+        # 2. Outfit shots 01-04
         for i in range(1, 5):
             candidate_urls.append(f"{BASE_IMG}/outfit/S/{their_code}-99999999_{i:02}.jpg{IMG_PARAM}")
+        
+        # 3. R and B variants
         candidate_urls.append(f"{BASE_IMG}/S/{their_code}_R.jpg{IMG_PARAM}")
         candidate_urls.append(f"{BASE_IMG}/S/{their_code}_B.jpg{IMG_PARAM}")
+        
+        # 4. Detail shots D1-D12
         for d in range(1, 13):
             candidate_urls.append(f"{BASE_IMG}/S/{their_code}_D{d}.jpg{IMG_PARAM}")
         
+        # Return up to max_images URLs - n8n will filter non-existent
         images = []
-        seen_hashes = set()
+        for i, url in enumerate(candidate_urls[:max_images]):
+            images.append({
+                "url": url,
+                "index": i + 1,
+                "filename": f"{sku}-{i + 1}"  # Temporary, n8n will renumber after filtering
+            })
         
-        for url in candidate_urls:
-            if len(images) >= max_images:
-                break
-            is_valid, content, img_hash = validate_image(url, mango_session, MIN_MANGO)
-            if is_valid and img_hash not in seen_hashes:
-                seen_hashes.add(img_hash)
-                images.append({"url": url, "index": len(images)+1})
-        
-        # EXACT swap logic from mango.py: if 5+ images, swap positions 4 and 5
-        if len(images) >= 5:
-            images[3], images[4] = images[4], images[3]
-        
-        for idx, img in enumerate(images):
-            img["index"] = idx + 1
-            img["filename"] = f"{sku}-{idx + 1}"
-        
-        return jsonify({"sku": sku, "formatted_sku": sku, "their_code": their_code, "images": images, "count": len(images)})
+        return jsonify({
+            "sku": sku, 
+            "formatted_sku": sku, 
+            "their_code": their_code, 
+            "images": images, 
+            "count": len(images),
+            "note": "No validation - n8n filters and renumbers"
+        })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
