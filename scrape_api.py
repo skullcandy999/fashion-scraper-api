@@ -12,6 +12,9 @@ import hashlib
 import time
 import re
 
+# Import scraper modula
+from scrapers import dsquared2
+
 app = Flask(__name__)
 CORS(app)
 
@@ -365,6 +368,26 @@ def scrape_boggi():
         return jsonify({"error": str(e)}), 500
 
 
+# ===================== DSQUARED2 =====================
+@app.route('/scrape-dsquared2', methods=['POST'])
+def scrape_dsquared2_endpoint():
+    """DSQUARED2 - koristi search-based pristup sa filterom po boji"""
+    try:
+        data = request.json
+        sku = data.get('sku', '').strip()
+        max_images = data.get('max_images', 5)
+        validate = data.get('validate', False)
+        
+        if not sku:
+            return jsonify({"error": "SKU required", "sku": sku, "images": []}), 400
+        
+        result = dsquared2.scrape(sku, max_images, validate)
+        return jsonify(result)
+        
+    except Exception as e:
+        return jsonify({"error": str(e), "sku": "", "images": []}), 500
+
+
 # ===================== GENERIC =====================
 @app.route('/scrape', methods=['POST'])
 def scrape_generic():
@@ -375,7 +398,8 @@ def scrape_generic():
         'MANGO': scrape_mango,
         'TOMMY': scrape_tommy, 'TOMMY HILFIGER': scrape_tommy,
         'ALLSAINTS': scrape_allsaints, 'ALL SAINTS': scrape_allsaints,
-        'BOGGI': scrape_boggi, 'BOGGI MILANO': scrape_boggi
+        'BOGGI': scrape_boggi, 'BOGGI MILANO': scrape_boggi,
+        'DSQUARED2': scrape_dsquared2_endpoint, 'DSQ': scrape_dsquared2_endpoint
     }
     if brand in routes:
         return routes[brand]()
