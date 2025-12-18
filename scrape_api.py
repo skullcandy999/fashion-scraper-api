@@ -330,7 +330,7 @@ def scrape_allsaints():
 # ===================== BOGGI MILANO =====================
 @app.route('/scrape-boggi', methods=['POST'])
 def scrape_boggi():
-    """Boggi Milano scraper - scrapes product page for image URLs"""
+    """Boggi Milano - EXACT copy from working Collab code"""
     try:
         data = request.json
         sku = data.get('sku', '').strip()
@@ -339,46 +339,35 @@ def scrape_boggi():
         if not sku or "-" not in sku:
             return jsonify({"error": f"Invalid SKU format: {sku}"}), 400
         
-        osnovna, boja = sku.rsplit("-", 1)
+        # EXACT from Collab
+        osnovna, boja = sku.split("-")
         
-        # Boggi product page URL
-        product_url = f"https://www.boggi.com/en-us/{osnovna}.html"
+        BASE = "https://ecdn.speedsize.com/90526ea8-ead7-46cf-ba09-f3be94be750a/www.boggi.com/dw/image/v2/BBBS_PRD/on/demandware.static/-/Sites-BoggiCatalog/default/images/hi-res/"
         
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-            "Accept-Language": "en-US,en;q=0.9",
-        }
-        
-        # Fetch product page
-        resp = requests.get(product_url, headers=headers, timeout=20)
-        
-        if resp.status_code != 200:
-            return jsonify({"error": f"Product page not found: {product_url}", "status": resp.status_code}), 404
-        
-        html = resp.text
-        
-        # Find hi-res image URLs in page
-        import re
-        pattern = r'https://ecdn\.speedsize\.com/[^"\']+/images/hi-res/' + osnovna + r'[^"\']*\.jpeg'
-        found_urls = re.findall(pattern, html)
-        
-        # Remove duplicates, keep order
-        seen = set()
-        unique_urls = []
-        for url in found_urls:
-            if url not in seen:
-                seen.add(url)
-                unique_urls.append(url)
-        
-        # Build images list
         images = []
-        for i, url in enumerate(unique_urls[:max_images]):
-            images.append({
-                "url": url,
-                "index": i + 1,
-                "filename": f"{sku}-{i+1}"
-            })
+        headers = {"User-Agent": "Mozilla/5.0"}
+        
+        for i in range(max_images):
+            # EXACT pattern from Collab
+            if i == 0:
+                file_part = f"{osnovna}.jpeg"
+            else:
+                file_part = f"{osnovna}_{i}.jpeg"
+            
+            url = BASE + file_part
+            
+            try:
+                resp = requests.get(url, headers=headers, timeout=8)
+                if resp.status_code == 200 and len(resp.content) > 20000:
+                    images.append({
+                        "url": url,
+                        "index": len(images) + 1,
+                        "filename": f"{sku}-{len(images)+1}"
+                    })
+                else:
+                    break  # EXACT behavior - break on first missing
+            except:
+                break
         
         return jsonify({
             "sku": sku,
@@ -388,8 +377,7 @@ def scrape_boggi():
         })
         
     except Exception as e:
-        import traceback
-        return jsonify({"error": str(e), "traceback": traceback.format_exc()}), 500
+        return jsonify({"error": str(e)}), 500
 
 
 # ===================== DSQUARED2 =====================
