@@ -327,13 +327,14 @@ def scrape_allsaints():
 
 
 
-# ===================== BOGGI MILANO =====================
+# ===================== BOGGI MILANO (NO VALIDATION) =====================
 @app.route('/scrape-boggi', methods=['POST'])
 def scrape_boggi():
     """
     BOGGI MILANO
-    Logic based on user's async working scraper
-    Returns ONLY validated existing images
+    NO VALIDATION
+    Generates EXACT same URLs as working Python / Colab script
+    n8n downloads + filters
     """
     try:
         data = request.json
@@ -343,11 +344,10 @@ def scrape_boggi():
         if not sku:
             return jsonify({"error": "SKU required"}), 400
 
-        # SKU format: BO25A014901-NAVY
         if "-" not in sku:
             return jsonify({"error": f"Invalid SKU format: {sku}"}), 400
 
-        base_code, color = sku.split("-", 1)
+        model_code, color_code = sku.split("-", 1)
 
         BASE_IMG = (
             "https://ecdn.speedsize.com/90526ea8-ead7-46cf-ba09-f3be94be750a/"
@@ -356,43 +356,36 @@ def scrape_boggi():
         )
 
         images = []
-        seen_hashes = set()
 
-        # EXACT order from your working script
-        for i in range(0, 5):
-            if len(images) >= max_images:
-                break
-
+        # EXACT SAME ORDER as Python script
+        for i in range(0, max_images):
             if i == 0:
-                filename_part = f"{base_code}.jpeg"
+                file_part = f"{model_code}.jpeg"
             else:
-                filename_part = f"{base_code}_{i}.jpeg"
+                file_part = f"{model_code}_{i}.jpeg"
 
-            url = BASE_IMG + filename_part
+            url = BASE_IMG + file_part
 
-            is_valid, content, img_hash = validate_image(url)
-
-            if is_valid and img_hash not in seen_hashes:
-                seen_hashes.add(img_hash)
-                images.append({
-                    "url": url,
-                    "index": len(images) + 1,
-                    "filename": f"{sku}-{len(images) + 1}"
-                })
-            else:
-                # If first image fails → no images for this SKU
-                if i == 0:
-                    break
+            images.append({
+                "url": url,
+                "index": i + 1,
+                "filename": f"{sku}-{i + 1}"
+            })
 
         return jsonify({
             "sku": sku,
             "formatted_sku": sku,
+            "model_code": model_code,
+            "color_code": color_code,
+            "landing_page": "empty",
             "images": images,
-            "count": len(images)
+            "count": len(images),
+            "note": "No validation – n8n filters invalid images"
         })
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
 
 
 
