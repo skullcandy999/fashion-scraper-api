@@ -326,10 +326,11 @@ def scrape_allsaints():
         return jsonify({"error": str(e)}), 500
 
 
-# ===================== BOGGI MILANO (from boggi.py) =====================
+
+# ===================== BOGGI MILANO =====================
 @app.route('/scrape-boggi', methods=['POST'])
 def scrape_boggi():
-    """EXACT logic from user's boggi.py"""
+    """Boggi Milano scraper"""
     try:
         data = request.json
         sku = data.get('sku', '').strip()
@@ -338,16 +339,19 @@ def scrape_boggi():
         if not sku or "-" not in sku:
             return jsonify({"error": f"Invalid SKU format: {sku}"}), 400
         
-        # EXACT from boggi.py
         osnovna, boja = sku.rsplit("-", 1)
         
-        BASE = "https://ecdn.speedsize.com/90526ea8-ead7-46cf-ba09-f3be94be750a/www.boggi.com/dw/image/v2/BBBS_PRD/on/demandware.static/-/Sites-BoggiCatalog/default/images/hi-res/"
-        MIN_BOGGI = 20000  # from boggi.py
+        BASE = "https://www.boggi.com/on/demandware.static/-/Sites-BoggiCatalog/default/images/hi-res/"
+        MIN_BOGGI = 20000
         
         images = []
         seen_hashes = set()
         
-        # EXACT pattern from boggi.py - BREAKS on first missing
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "Referer": "https://www.boggi.com/"
+        }
+        
         for i in range(max_images):
             if i == 0:
                 file_part = f"{osnovna}.jpeg"
@@ -355,15 +359,25 @@ def scrape_boggi():
                 file_part = f"{osnovna}_{i}.jpeg"
             
             url = BASE + file_part
-            is_valid, content, img_hash = validate_image(url, min_bytes=MIN_BOGGI)
             
-            if is_valid and img_hash not in seen_hashes:
-                seen_hashes.add(img_hash)
-                images.append({"url": url, "index": len(images)+1, "filename": f"{sku}-{len(images)+1}"})
-            else:
-                break  # EXACT behavior from boggi.py - break on first missing
+            try:
+                resp = requests.get(url, headers=headers, timeout=15)
+                if resp.status_code == 200 and len(resp.content) > MIN_BOGGI:
+                    img_hash = hashlib.md5(resp.content).hexdigest()
+                    if img_hash not in seen_hashes:
+                        seen_hashes.add(img_hash)
+                        images.append({
+                            "url": url,
+                            "index": len(images)+1,
+                            "filename": f"{sku}-{len(images)+1}"
+                        })
+                else:
+                    break
+            except:
+                break
         
         return jsonify({"sku": sku, "formatted_sku": sku, "images": images, "count": len(images)})
+        
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
