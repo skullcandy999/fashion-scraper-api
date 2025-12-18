@@ -330,54 +330,70 @@ def scrape_allsaints():
 # ===================== BOGGI MILANO =====================
 @app.route('/scrape-boggi', methods=['POST'])
 def scrape_boggi():
-    """Boggi Milano - EXACT copy from working Collab code"""
+    """
+    BOGGI MILANO
+    Logic based on user's async working scraper
+    Returns ONLY validated existing images
+    """
     try:
         data = request.json
-        sku = data.get('sku', '').strip()
-        max_images = data.get('max_images', 5)
-        
-        if not sku or "-" not in sku:
+        sku = data.get("sku", "").strip()
+        max_images = data.get("max_images", 5)
+
+        if not sku:
+            return jsonify({"error": "SKU required"}), 400
+
+        # SKU format: BO25A014901-NAVY
+        if "-" not in sku:
             return jsonify({"error": f"Invalid SKU format: {sku}"}), 400
-        
-        # EXACT from Collab
-        osnovna, boja = sku.split("-")
-        
-        BASE = "https://ecdn.speedsize.com/90526ea8-ead7-46cf-ba09-f3be94be750a/www.boggi.com/dw/image/v2/BBBS_PRD/on/demandware.static/-/Sites-BoggiCatalog/default/images/hi-res/"
-        
+
+        base_code, color = sku.split("-", 1)
+
+        BASE_IMG = (
+            "https://ecdn.speedsize.com/90526ea8-ead7-46cf-ba09-f3be94be750a/"
+            "www.boggi.com/dw/image/v2/BBBS_PRD/on/demandware.static/-/"
+            "Sites-BoggiCatalog/default/images/hi-res/"
+        )
+
         images = []
-        headers = {"User-Agent": "Mozilla/5.0"}
-        
-        for i in range(max_images):
-            # EXACT pattern from Collab
-            if i == 0:
-                file_part = f"{osnovna}.jpeg"
-            else:
-                file_part = f"{osnovna}_{i}.jpeg"
-            
-            url = BASE + file_part
-            
-            try:
-                resp = requests.get(url, headers=headers, timeout=8)
-                if resp.status_code == 200 and len(resp.content) > 20000:
-                    images.append({
-                        "url": url,
-                        "index": len(images) + 1,
-                        "filename": f"{sku}-{len(images)+1}"
-                    })
-                else:
-                    break  # EXACT behavior - break on first missing
-            except:
+        seen_hashes = set()
+
+        # EXACT order from your working script
+        for i in range(0, 5):
+            if len(images) >= max_images:
                 break
-        
+
+            if i == 0:
+                filename_part = f"{base_code}.jpeg"
+            else:
+                filename_part = f"{base_code}_{i}.jpeg"
+
+            url = BASE_IMG + filename_part
+
+            is_valid, content, img_hash = validate_image(url)
+
+            if is_valid and img_hash not in seen_hashes:
+                seen_hashes.add(img_hash)
+                images.append({
+                    "url": url,
+                    "index": len(images) + 1,
+                    "filename": f"{sku}-{len(images) + 1}"
+                })
+            else:
+                # If first image fails → no images for this SKU
+                if i == 0:
+                    break
+
         return jsonify({
             "sku": sku,
             "formatted_sku": sku,
             "images": images,
             "count": len(images)
         })
-        
+
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
 
 
 # ===================== DSQUARED2 =====================
