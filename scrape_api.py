@@ -427,9 +427,11 @@ def scrape_coach():
 
 
 # ===================== DIESEL =====================
+from scrapers import diesel
+
 @app.route('/scrape-diesel', methods=['POST'])
 def scrape_diesel():
-    """DIESEL - 9 views: C, E, F, I, B, D, A, G, H"""
+    """DIESEL - uses scrapers/diesel.py module"""
     try:
         data = request.json
         sku = data.get('sku', '').strip()
@@ -438,33 +440,9 @@ def scrape_diesel():
         if not sku:
             return jsonify({"error": "SKU required"}), 400
         
-        parts = re.split(r"\s+", sku.strip())
-        if len(parts) != 3:
-            return jsonify({"error": f"Invalid SKU format: {sku}"}), 400
+        result = diesel.scrape(sku, max_images=max_images)
+        return jsonify(result)
         
-        prefix_map = {"DSA": "A", "DSX": "X", "DSY": "Y"}
-        first_part = parts[0]
-        prefix = prefix_map.get(first_part[:3], "A")
-        num = first_part[3:]
-        
-        diesel_code = f"{prefix}{num}_{parts[1]}_{parts[2]}"
-        
-        BASE = "https://shop.diesel.com/dw/image/v2/BBLG_PRD/on/demandware.static/-/Sites-diesel-master-catalog/default/images/large"
-        VIEWS = ["C", "E", "F", "I", "B", "D", "A", "G", "H"]
-        
-        images = []
-        seen_hashes = set()
-        
-        for view in VIEWS:
-            if len(images) >= max_images:
-                break
-            url = f"{BASE}/{diesel_code}_{view}.jpg?sw=1200&sh=1600&sm=fit"
-            is_valid, content, img_hash = validate_image(url, min_bytes=20000)
-            if is_valid and img_hash not in seen_hashes:
-                seen_hashes.add(img_hash)
-                images.append({"url": url, "index": len(images) + 1, "filename": f"{sku.replace(' ', '_')}-{len(images) + 1}"})
-        
-        return jsonify({"sku": sku, "brand_code": diesel_code, "images": images, "count": len(images)})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
