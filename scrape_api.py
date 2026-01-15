@@ -1283,7 +1283,7 @@ def scrape_generic():
         'WOOLRICH': scrape_woolrich,
         'FALKE': scrape_falke,
         'ENTERPRISE JAPAN': scrape_enterprise_japan, 'EJ': scrape_enterprise_japan,
-        'LEVI'S': scrape_levis_endpoint, 'LEVIS': scrape_levis_endpoint,
+        "LEVI'S": scrape_levis_endpoint, 'LEVIS': scrape_levis_endpoint,
         'GOLDEN GOOSE': scrape_golden_goose_endpoint, 'GG': scrape_golden_goose_endpoint,
     }
     
