@@ -1260,7 +1260,6 @@ def scrape_generic():
         
         # NEW CDN BRANDS
         'CALVIN KLEIN': scrape_calvin_klein, 'CK': scrape_calvin_klein,
-        'COACH': scrape_coach,
         'DIESEL': scrape_diesel,
         'KURT GEIGER': scrape_kurt_geiger, 'KG': scrape_kurt_geiger,
         'KATE SPADE': scrape_kate_spade, 'KS': scrape_kate_spade,
@@ -1285,6 +1284,7 @@ def scrape_generic():
         'ENTERPRISE JAPAN': scrape_enterprise_japan, 'EJ': scrape_enterprise_japan,
         "LEVI'S": scrape_levis_endpoint, 'LEVIS': scrape_levis_endpoint,
         'GOLDEN GOOSE': scrape_golden_goose_endpoint, 'GG': scrape_golden_goose_endpoint,
+        'COACH': scrape_coach_endpoint,
     }
     
     if brand in routes:
