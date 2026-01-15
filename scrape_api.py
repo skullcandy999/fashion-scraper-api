@@ -14,6 +14,7 @@ import re
 # Import scraper modula
 from scrapers import dsquared2
 
+
 app = Flask(__name__)
 CORS(app)
 
@@ -387,41 +388,18 @@ def scrape_calvin_klein():
         return jsonify({"error": str(e)}), 500
 
 
-# ===================== COACH =====================
+# ===================== COACH (PARALLEL - LARGE IMAGES) =====================
 @app.route('/scrape-coach', methods=['POST'])
-def scrape_coach():
-    """COACH - 11 pozicija: a0-a10"""
+def scrape_coach_endpoint():
     try:
+        from scrapers.scrape_coach import scrape_coach
         data = request.json
         sku = data.get('sku', '').strip()
         max_images = data.get('max_images', 5)
-        
         if not sku:
             return jsonify({"error": "SKU required"}), 400
-        
-        clean = sku.replace("CH", "").lower()
-        parts = clean.split("-")
-        if len(parts) != 3:
-            return jsonify({"error": f"Invalid SKU format: {sku}"}), 400
-        
-        coach_code = f"{parts[0]}_{parts[1]}{parts[2]}"
-        
-        BASE = "https://coach.scene7.com/is/image/Coach/"
-        SUFFIXES = ["a0", "a1", "a2", "a3", "a4", "a5", "a6", "a7", "a8", "a9", "a10"]
-        
-        images = []
-        seen_hashes = set()
-        
-        for suffix in SUFFIXES:
-            if len(images) >= max_images:
-                break
-            url = f"{BASE_URL}{code}_{suffix}?$desktopProductZoom$"
-            is_valid, content, img_hash = validate_image(url)
-            if is_valid and img_hash not in seen_hashes:
-                seen_hashes.add(img_hash)
-                images.append({"url": url, "index": len(images) + 1, "filename": f"{sku}-{len(images) + 1}"})
-        
-        return jsonify({"sku": sku, "brand_code": coach_code, "images": images, "count": len(images)})
+        result = scrape_coach(sku, max_images)
+        return jsonify(result)
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -1235,6 +1213,36 @@ def scrape_enterprise_japan():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+# ===================== LEVI'S (PARALLEL) =====================
+@app.route('/scrape-levis', methods=['POST'])
+def scrape_levis_endpoint():
+    try:
+        from scrapers.scrape_levis import scrape_levis
+        data = request.json
+        sku = data.get('sku', '').strip()
+        max_images = data.get('max_images', 5)
+        if not sku:
+            return jsonify({"error": "SKU required"}), 400
+        result = scrape_levis(sku, max_images)
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+# ===================== GOLDEN GOOSE (PARALLEL) =====================
+@app.route('/scrape-golden-goose', methods=['POST'])
+def scrape_golden_goose_endpoint():
+    try:
+        from scrapers.scrape_golden_goose import scrape_golden_goose
+        data = request.json
+        sku = data.get('sku', '').strip()
+        max_images = data.get('max_images', 5)
+        if not sku:
+            return jsonify({"error": "SKU required"}), 400
+        result = scrape_golden_goose(sku, max_images)
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 
 # ===================== GENERIC ENDPOINT =====================
 @app.route('/scrape', methods=['POST'])
@@ -1275,6 +1283,8 @@ def scrape_generic():
         'WOOLRICH': scrape_woolrich,
         'FALKE': scrape_falke,
         'ENTERPRISE JAPAN': scrape_enterprise_japan, 'EJ': scrape_enterprise_japan,
+        'LEVI'S': scrape_levis_endpoint, 'LEVIS': scrape_levis_endpoint,
+        'GOLDEN GOOSE': scrape_golden_goose_endpoint, 'GG': scrape_golden_goose_endpoint,
     }
     
     if brand in routes:
