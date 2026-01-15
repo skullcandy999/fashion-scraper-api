@@ -415,7 +415,7 @@ def scrape_coach():
         for suffix in SUFFIXES:
             if len(images) >= max_images:
                 break
-            url = f"{BASE}{coach_code}_{suffix}?wid=2000&fmt=jpg"
+            url = f"{BASE_URL}{code}_{suffix}?$desktopProductZoom$"
             is_valid, content, img_hash = validate_image(url)
             if is_valid and img_hash not in seen_hashes:
                 seen_hashes.add(img_hash)
