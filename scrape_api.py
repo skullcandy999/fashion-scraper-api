@@ -255,7 +255,7 @@ def scrape_mango():
             url, idx = url_idx
             try:
                 r = requests.get(url, headers=mango_headers, timeout=10)
-                if r.status_code == 200 and len(r.content) > 5000:
+               if r.status_code == 200 and len(r.content) > 5000 and r.content[:2] == b'\xff\xd8':
                     b64 = base64.b64encode(r.content).decode('utf-8')
                     return {
                         "url": url,
