@@ -242,7 +242,6 @@ def scrape_mango():
         for d in range(1, 13):
             candidate_urls.append(f"{BASE_IMG}/S/{their_code}_D{d}.jpg{IMG_PARAM}")
         
-        # MANGO headers - bez ovih sajt blokira
         mango_headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
             "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
@@ -250,12 +249,11 @@ def scrape_mango():
             "Accept-Language": "en-US,en;q=0.9",
         }
         
-        # Preuzmi slike paralelno i vrati kao base64
         def download_mango_image(url_idx):
             url, idx = url_idx
             try:
                 r = requests.get(url, headers=mango_headers, timeout=10)
-               if r.status_code == 200 and len(r.content) > 5000 and r.content[:2] == b'\xff\xd8':
+                if r.status_code == 200 and len(r.content) > 5000 and r.content[:2] == b'\xff\xd8':
                     b64 = base64.b64encode(r.content).decode('utf-8')
                     return {
                         "url": url,
@@ -275,9 +273,7 @@ def scrape_mango():
                 if result and len(images) < max_images:
                     images.append(result)
         
-        # Sortiraj po indexu
         images.sort(key=lambda x: x['index'])
-        # Reindex
         for i, img in enumerate(images):
             img['index'] = i + 1
             img['filename'] = f"{sku}-{i + 1}"
