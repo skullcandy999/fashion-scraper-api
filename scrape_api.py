@@ -214,9 +214,10 @@ def scrape_maje():
 # ===================== MANGO (BASE64 + PARALLEL) =====================
 @app.route('/scrape-mango', methods=['POST'])
 def scrape_mango():
-    """MANGO - preuzima slike i vraća base64 (sajt blokira direktni pristup)"""
+    """MANGO - IDENTIČNO kao lokalni scraper"""
     from PIL import Image
     from io import BytesIO
+    from requests.adapters import HTTPAdapter, Retry
     
     try:
         data = request.json
@@ -233,9 +234,26 @@ def scrape_mango():
         number, color = m.group(1), m.group(2)
         their_code = f"{number}_{color}"
         
+        # IDENTIČNO kao lokalni scraper
         BASE_IMG = "https://shop.mango.com/assets/rcs/pics/static/T2/fotos"
         IMG_PARAM = "?imwidth=800&imdensity=1"
+        MIN_BYTES = 9000
+        TIMEOUT = 20
         
+        # Session sa retry - IDENTIČNO kao lokalni
+        session = requests.Session()
+        session.headers.update({
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+            "Referer": "https://shop.mango.com/",
+            "Connection": "keep-alive",
+        })
+        retries = Retry(total=3, backoff_factor=0.5, status_forcelist=(429, 500, 502, 503, 504))
+        adapter = HTTPAdapter(max_retries=retries, pool_connections=100, pool_maxsize=100)
+        session.mount("https://", adapter)
+        session.mount("http://", adapter)
+        
+        # Candidate URLs - IDENTIČNO kao lokalni
         candidate_urls = []
         candidate_urls.append(f"{BASE_IMG}/S/{their_code}.jpg{IMG_PARAM}")
         for i in range(1, 5):
@@ -245,15 +263,8 @@ def scrape_mango():
         for d in range(1, 13):
             candidate_urls.append(f"{BASE_IMG}/S/{their_code}_D{d}.jpg{IMG_PARAM}")
         
-        mango_headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-            "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
-            "Referer": "https://shop.mango.com/",
-            "Accept-Language": "en-US,en;q=0.9",
-        }
-        
         def validate_image(content):
-            if not content or len(content) < 9000:
+            if not content or len(content) < MIN_BYTES:
                 return False
             try:
                 Image.open(BytesIO(content)).verify()
@@ -261,34 +272,40 @@ def scrape_mango():
             except:
                 return False
         
-        def download_mango_image(url_idx):
-            url, idx = url_idx
+        def try_get(url):
             try:
-                r = requests.get(url, headers=mango_headers, timeout=10)
-                if r.status_code == 200 and validate_image(r.content):
-                    b64 = base64.b64encode(r.content).decode('utf-8')
-                    return {
-                        "url": url,
-                        "base64": b64,
-                        "index": idx,
-                        "filename": f"{sku}-{idx}"
-                    }
+                r = session.get(url, timeout=TIMEOUT)
+                if r.status_code == 200 and r.content:
+                    return r
             except:
                 pass
             return None
         
-        images = []
-        with ThreadPoolExecutor(max_workers=10) as executor:
-            futures = [executor.submit(download_mango_image, (url, i + 1)) for i, url in enumerate(candidate_urls)]
-            for future in futures:
-                result = future.result()
-                if result and len(images) < max_images:
-                    images.append(result)
+        # Preuzmi slike SEKVENCIJALNO (kao lokalni)
+        found = []
+        for url in candidate_urls:
+            if len(found) >= max_images:
+                break
+            r = try_get(url)
+            if r and validate_image(r.content):
+                found.append({
+                    "url": url,
+                    "content": r.content
+                })
         
-        images.sort(key=lambda x: x['index'])
-        for i, img in enumerate(images):
-            img['index'] = i + 1
-            img['filename'] = f"{sku}-{i + 1}"
+        # Swap 4 i 5 ako ima 5+ slika (kao lokalni)
+        if len(found) >= 5:
+            found[3], found[4] = found[4], found[3]
+        
+        # Konvertuj u base64
+        images = []
+        for idx, item in enumerate(found, start=1):
+            images.append({
+                "url": item["url"],
+                "base64": base64.b64encode(item["content"]).decode('utf-8'),
+                "index": idx,
+                "filename": f"{sku}-{idx}"
+            })
         
         return jsonify({"sku": sku, "formatted_sku": sku, "their_code": their_code, "images": images, "count": len(images), "note": "base64 encoded"})
     except Exception as e:
