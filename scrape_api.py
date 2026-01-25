@@ -214,7 +214,7 @@ def scrape_maje():
 # ===================== MANGO (BASE64 + PARALLEL) =====================
 @app.route('/scrape-mango', methods=['POST'])
 def scrape_mango():
-    """MANGO - Downloads images and returns BASE64 (site blocks direct access)"""
+    """MANGO - preuzima slike i vraća base64 (sajt blokira direktni pristup)"""
     try:
         data = request.json
         sku = data.get('sku', '').strip()
@@ -231,9 +231,8 @@ def scrape_mango():
         their_code = f"{number}_{color}"
         
         BASE_IMG = "https://shop.mango.com/assets/rcs/pics/static/T2/fotos"
-        IMG_PARAM = "?imwidth=2048&imdensity=1"
+        IMG_PARAM = "?imwidth=800&imdensity=1"
         
-        # Build candidate URLs
         candidate_urls = []
         candidate_urls.append(f"{BASE_IMG}/S/{their_code}.jpg{IMG_PARAM}")
         for i in range(1, 5):
@@ -243,69 +242,47 @@ def scrape_mango():
         for d in range(1, 13):
             candidate_urls.append(f"{BASE_IMG}/S/{their_code}_D{d}.jpg{IMG_PARAM}")
         
-        # Create session with Mango headers
-        mango_session = make_session({
+        # MANGO headers - bez ovih sajt blokira
+        mango_headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
             "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
             "Referer": "https://shop.mango.com/",
-            "Accept-Language": "en-US,en;q=0.9"
-        })
+            "Accept-Language": "en-US,en;q=0.9",
+        }
         
-        # Download and validate images in parallel, return base64
-        def download_mango_image(args):
-            url, idx = args
+        # Preuzmi slike paralelno i vrati kao base64
+        def download_mango_image(url_idx):
+            url, idx = url_idx
             try:
-                r = mango_session.get(url, timeout=TIMEOUT)
-                if r.status_code == 200 and r.content and len(r.content) > MIN_BYTES:
-                    content_type = r.headers.get("Content-Type", "").lower()
-                    if "image" in content_type:
-                        img_hash = sha1_hash(r.content)
-                        b64 = base64.b64encode(r.content).decode('utf-8')
-                        return (url, True, b64, img_hash, idx)
+                r = requests.get(url, headers=mango_headers, timeout=10)
+                if r.status_code == 200 and len(r.content) > 5000:
+                    b64 = base64.b64encode(r.content).decode('utf-8')
+                    return {
+                        "url": url,
+                        "base64": b64,
+                        "index": idx,
+                        "filename": f"{sku}-{idx}"
+                    }
             except:
                 pass
-            return (url, False, None, None, idx)
+            return None
         
-        # Parallel download
         images = []
-        seen_hashes = set()
+        with ThreadPoolExecutor(max_workers=10) as executor:
+            futures = [executor.submit(download_mango_image, (url, i + 1)) for i, url in enumerate(candidate_urls)]
+            for future in futures:
+                result = future.result()
+                if result and len(images) < max_images:
+                    images.append(result)
         
-        args_list = [(url, idx) for idx, url in enumerate(candidate_urls)]
+        # Sortiraj po indexu
+        images.sort(key=lambda x: x['index'])
+        # Reindex
+        for i, img in enumerate(images):
+            img['index'] = i + 1
+            img['filename'] = f"{sku}-{i + 1}"
         
-        with ThreadPoolExecutor(max_workers=MAX_VALIDATION_WORKERS) as executor:
-            futures = [executor.submit(download_mango_image, args) for args in args_list]
-            results = []
-            for future in as_completed(futures):
-                try:
-                    result = future.result()
-                    if result[1]:  # is_valid
-                        results.append(result)
-                except:
-                    pass
-        
-        # Sort by original order
-        results.sort(key=lambda x: x[4])
-        
-        # Build final list
-        for url, is_valid, b64_data, img_hash, idx in results:
-            if len(images) >= max_images:
-                break
-            if img_hash and img_hash not in seen_hashes:
-                seen_hashes.add(img_hash)
-                images.append({
-                    "url": url,
-                    "base64": b64_data,
-                    "index": len(images) + 1,
-                    "filename": f"{sku}-{len(images) + 1}"
-                })
-        
-        return jsonify({
-            "sku": sku,
-            "formatted_sku": sku,
-            "their_code": their_code,
-            "images": images,
-            "count": len(images),
-            "note": "Images returned as base64"
-        })
+        return jsonify({"sku": sku, "formatted_sku": sku, "their_code": their_code, "images": images, "count": len(images), "note": "base64 encoded"})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
