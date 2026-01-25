@@ -214,11 +214,7 @@ def scrape_maje():
 # ===================== MANGO (BASE64 + PARALLEL) =====================
 @app.route('/scrape-mango', methods=['POST'])
 def scrape_mango():
-    """MANGO - IDENTIČNO kao lokalni scraper"""
-    from PIL import Image
-    from io import BytesIO
-    from requests.adapters import HTTPAdapter, Retry
-    
+    """MANGO - Downloads images and returns BASE64 (site blocks direct access)"""
     try:
         data = request.json
         sku = data.get('sku', '').strip()
@@ -234,26 +230,10 @@ def scrape_mango():
         number, color = m.group(1), m.group(2)
         their_code = f"{number}_{color}"
         
-        # IDENTIČNO kao lokalni scraper
         BASE_IMG = "https://shop.mango.com/assets/rcs/pics/static/T2/fotos"
-        IMG_PARAM = "?imwidth=800&imdensity=1"
-        MIN_BYTES = 9000
-        TIMEOUT = 20
+        IMG_PARAM = "?imwidth=2048&imdensity=1"
         
-        # Session sa retry - IDENTIČNO kao lokalni
-        session = requests.Session()
-        session.headers.update({
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125 Safari/537.36",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
-            "Referer": "https://shop.mango.com/",
-            "Connection": "keep-alive",
-        })
-        retries = Retry(total=3, backoff_factor=0.5, status_forcelist=(429, 500, 502, 503, 504))
-        adapter = HTTPAdapter(max_retries=retries, pool_connections=100, pool_maxsize=100)
-        session.mount("https://", adapter)
-        session.mount("http://", adapter)
-        
-        # Candidate URLs - IDENTIČNO kao lokalni
+        # Build candidate URLs
         candidate_urls = []
         candidate_urls.append(f"{BASE_IMG}/S/{their_code}.jpg{IMG_PARAM}")
         for i in range(1, 5):
@@ -263,51 +243,105 @@ def scrape_mango():
         for d in range(1, 13):
             candidate_urls.append(f"{BASE_IMG}/S/{their_code}_D{d}.jpg{IMG_PARAM}")
         
-        def validate_image(content):
-            if not content or len(content) < MIN_BYTES:
-                return False
-            try:
-                Image.open(BytesIO(content)).verify()
-                return True
-            except:
-                return False
+        # Create session with Mango headers
+        mango_session = make_session({
+            "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
+            "Referer": "https://shop.mango.com/",
+            "Accept-Language": "en-US,en;q=0.9"
+        })
         
-        def try_get(url):
+        # Download and validate images in parallel, return base64
+        def download_mango_image(args):
+            url, idx = args
             try:
-                r = session.get(url, timeout=TIMEOUT)
-                if r.status_code == 200 and r.content:
-                    return r
+                r = mango_session.get(url, timeout=TIMEOUT)
+                if r.status_code == 200 and r.content and len(r.content) > MIN_BYTES:
+                    content_type = r.headers.get("Content-Type", "").lower()
+                    if "image" in content_type:
+                        img_hash = sha1_hash(r.content)
+                        b64 = base64.b64encode(r.content).decode('utf-8')
+                        return (url, True, b64, img_hash, idx)
             except:
                 pass
-            return None
+            return (url, False, None, None, idx)
         
-        # Preuzmi slike SEKVENCIJALNO (kao lokalni)
-        found = []
-        for url in candidate_urls:
-            if len(found) >= max_images:
+        # Parallel download
+        images = []
+        seen_hashes = set()
+        
+        args_list = [(url, idx) for idx, url in enumerate(candidate_urls)]
+        
+        with ThreadPoolExecutor(max_workers=MAX_VALIDATION_WORKERS) as executor:
+            futures = [executor.submit(download_mango_image, args) for args in args_list]
+            results = []
+            for future in as_completed(futures):
+                try:
+                    result = future.result()
+                    if result[1]:  # is_valid
+                        results.append(result)
+                except:
+                    pass
+        
+        # Sort by original order
+        results.sort(key=lambda x: x[4])
+        
+        # Build final list
+        for url, is_valid, b64_data, img_hash, idx in results:
+            if len(images) >= max_images:
                 break
-            r = try_get(url)
-            if r and validate_image(r.content):
-                found.append({
+            if img_hash and img_hash not in seen_hashes:
+                seen_hashes.add(img_hash)
+                images.append({
                     "url": url,
-                    "content": r.content
+                    "base64": b64_data,
+                    "index": len(images) + 1,
+                    "filename": f"{sku}-{len(images) + 1}"
                 })
         
-        # Swap 4 i 5 ako ima 5+ slika (kao lokalni)
-        if len(found) >= 5:
-            found[3], found[4] = found[4], found[3]
+        return jsonify({
+            "sku": sku,
+            "formatted_sku": sku,
+            "their_code": their_code,
+            "images": images,
+            "count": len(images),
+            "note": "Images returned as base64"
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+# ===================== TOMMY HILFIGER (PARALLEL) =====================
+@app.route('/scrape-tommy', methods=['POST'])
+def scrape_tommy():
+    """TOMMY HILFIGER - PARALLEL validation"""
+    try:
+        data = request.json
+        sku = data.get('sku', '').strip()
+        max_images = data.get('max_images', 5)
         
-        # Konvertuj u base64
-        images = []
-        for idx, item in enumerate(found, start=1):
-            images.append({
-                "url": item["url"],
-                "base64": base64.b64encode(item["content"]).decode('utf-8'),
-                "index": idx,
-                "filename": f"{sku}-{idx}"
-            })
+        if not sku:
+            return jsonify({"error": "SKU required"}), 400
         
-        return jsonify({"sku": sku, "formatted_sku": sku, "their_code": their_code, "images": images, "count": len(images), "note": "base64 encoded"})
+        base_code = sku.replace("TH", "")
+        formatted_code = base_code.replace("-", "_")
+        formatted_sku = f"TH{base_code}"
+        
+        base_url = "https://tommy-europe.scene7.com/is/image/TommyEurope"
+        params = "?wid=781&fmt=jpeg&qlt=95%2C1&op_sharpen=0&resMode=sharp2&op_usm=1.5%2C.5%2C0%2C0&iccEmbed=0&printRes=72"
+        
+        suffixes = ["main", "alternate1", "alternate2", "alternate3", "alternate4"]
+        
+        # Build all URLs
+        url_list = [(f"{base_url}/{formatted_code}_{suffix}{params}", {"suffix": suffix}) for suffix in suffixes]
+        
+        # Validate in parallel
+        images = validate_urls_parallel(url_list, max_images=max_images)
+        
+        for idx, img in enumerate(images):
+            img["index"] = idx + 1
+            img["filename"] = f"{formatted_sku}-{idx + 1}"
+        
+        return jsonify({"sku": sku, "formatted_sku": formatted_sku, "images": images, "count": len(images)})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
