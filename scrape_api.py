@@ -215,6 +215,9 @@ def scrape_maje():
 @app.route('/scrape-mango', methods=['POST'])
 def scrape_mango():
     """MANGO - preuzima slike i vraća base64 (sajt blokira direktni pristup)"""
+    from PIL import Image
+    from io import BytesIO
+    
     try:
         data = request.json
         sku = data.get('sku', '').strip()
@@ -249,11 +252,20 @@ def scrape_mango():
             "Accept-Language": "en-US,en;q=0.9",
         }
         
+        def validate_image(content):
+            if not content or len(content) < 9000:
+                return False
+            try:
+                Image.open(BytesIO(content)).verify()
+                return True
+            except:
+                return False
+        
         def download_mango_image(url_idx):
             url, idx = url_idx
             try:
                 r = requests.get(url, headers=mango_headers, timeout=10)
-                if r.status_code == 200 and len(r.content) > 5000 and r.content[:2] == b'\xff\xd8':
+                if r.status_code == 200 and validate_image(r.content):
                     b64 = base64.b64encode(r.content).decode('utf-8')
                     return {
                         "url": url,
@@ -279,42 +291,6 @@ def scrape_mango():
             img['filename'] = f"{sku}-{i + 1}"
         
         return jsonify({"sku": sku, "formatted_sku": sku, "their_code": their_code, "images": images, "count": len(images), "note": "base64 encoded"})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
-# ===================== TOMMY HILFIGER (PARALLEL) =====================
-@app.route('/scrape-tommy', methods=['POST'])
-def scrape_tommy():
-    """TOMMY HILFIGER - PARALLEL validation"""
-    try:
-        data = request.json
-        sku = data.get('sku', '').strip()
-        max_images = data.get('max_images', 5)
-        
-        if not sku:
-            return jsonify({"error": "SKU required"}), 400
-        
-        base_code = sku.replace("TH", "")
-        formatted_code = base_code.replace("-", "_")
-        formatted_sku = f"TH{base_code}"
-        
-        base_url = "https://tommy-europe.scene7.com/is/image/TommyEurope"
-        params = "?wid=781&fmt=jpeg&qlt=95%2C1&op_sharpen=0&resMode=sharp2&op_usm=1.5%2C.5%2C0%2C0&iccEmbed=0&printRes=72"
-        
-        suffixes = ["main", "alternate1", "alternate2", "alternate3", "alternate4"]
-        
-        # Build all URLs
-        url_list = [(f"{base_url}/{formatted_code}_{suffix}{params}", {"suffix": suffix}) for suffix in suffixes]
-        
-        # Validate in parallel
-        images = validate_urls_parallel(url_list, max_images=max_images)
-        
-        for idx, img in enumerate(images):
-            img["index"] = idx + 1
-            img["filename"] = f"{formatted_sku}-{idx + 1}"
-        
-        return jsonify({"sku": sku, "formatted_sku": formatted_sku, "images": images, "count": len(images)})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
