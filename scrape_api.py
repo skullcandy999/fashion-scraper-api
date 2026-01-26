@@ -1339,6 +1339,24 @@ def scrape_golden_goose_endpoint():
         return jsonify({"error": str(e)}), 500
 
 
+# ===================== LIU JO =====================
+@app.route('/scrape-liujo', methods=['POST'])
+def scrape_liujo_endpoint():
+    """LIU JO - uses scrapers/liujo.py module"""
+    try:
+        from scrapers import liujo
+        data = request.json
+        sku = data.get('sku', '').strip()
+        max_images = data.get('max_images', 5)
+        validate = data.get('validate', False)
+        if not sku:
+            return jsonify({"error": "SKU required", "sku": sku, "images": []}), 400
+        result = liujo.scrape(sku, max_images, validate)
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"error": str(e), "sku": "", "images": []}), 500
+
+
 # ===================== GENERIC ENDPOINT =====================
 @app.route('/scrape', methods=['POST'])
 def scrape_generic():
@@ -1380,6 +1398,7 @@ def scrape_generic():
         "LEVI'S": scrape_levis_endpoint, 'LEVIS': scrape_levis_endpoint,
         'GOLDEN GOOSE': scrape_golden_goose_endpoint, 'GG': scrape_golden_goose_endpoint,
         'COACH': scrape_coach_endpoint,
+        'LIU JO': scrape_liujo_endpoint, 'LIUJO': scrape_liujo_endpoint, 'LJ': scrape_liujo_endpoint,
     }
     
     if brand in routes:
