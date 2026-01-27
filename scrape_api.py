@@ -231,7 +231,8 @@ def scrape_mango():
         their_code = f"{number}_{color}"
         
         BASE_IMG = "https://shop.mango.com/assets/rcs/pics/static/T2/fotos"
-        IMG_PARAM = "?imwidth=2048&imdensity=1"
+        # Force JPEG format output to avoid AVIF (which Modal can't process)
+        IMG_PARAM = "?imwidth=2048&imdensity=1&imformat=jpeg"
         
         # Build candidate URLs
         # Order: Main, Outfit, R, D1 (detail), B (packshot as 5th)
@@ -247,9 +248,9 @@ def scrape_mango():
             candidate_urls.append(f"{BASE_IMG}/S/{their_code}_D{d}.jpg{IMG_PARAM}")
         
         # Create session with Mango headers
-        # IMPORTANT: Request JPEG format, not AVIF (Modal can't process AVIF)
+        # IMPORTANT: Request JPEG/PNG only, explicitly reject AVIF/WebP (Modal can't process them)
         mango_session = make_session({
-            "Accept": "image/jpeg,image/*;q=0.8",
+            "Accept": "image/jpeg,image/png;q=0.9,image/*;q=0.1",
             "Referer": "https://shop.mango.com/",
             "Accept-Language": "en-US,en;q=0.9"
         })
@@ -261,6 +262,22 @@ def scrape_mango():
                 r = mango_session.get(url, timeout=TIMEOUT)
                 if r.status_code == 200 and r.content and len(r.content) > MIN_BYTES:
                     content_type = r.headers.get("Content-Type", "").lower()
+                    # REJECT AVIF - Modal cannot process AVIF format
+                    if "avif" in content_type or "webp" in content_type:
+                        return (url, False, None, None, idx)
+                    # Check file signature to reject AVIF/WebP that might be mislabeled
+                    if len(r.content) > 12:
+                        # AVIF: contains 'ftypavif' or 'ftypavis' in first 16 bytes
+                        if b'ftyp' in r.content[:12] and (b'avif' in r.content[:16] or b'avis' in r.content[:16]):
+                            return (url, False, None, None, idx)
+                        # WebP: starts with 'RIFF' and contains 'WEBP'
+                        if r.content[:4] == b'RIFF' and b'WEBP' in r.content[:12]:
+                            return (url, False, None, None, idx)
+                    # Verify it's JPEG (FF D8 FF) or PNG (89 50 4E 47)
+                    is_jpeg = r.content[:3] == b'\xff\xd8\xff'
+                    is_png = r.content[:4] == b'\x89PNG'
+                    if not (is_jpeg or is_png):
+                        return (url, False, None, None, idx)
                     if "image" in content_type:
                         img_hash = sha1_hash(r.content)
                         b64 = base64.b64encode(r.content).decode('utf-8')
@@ -979,49 +996,60 @@ def scrape_armani_exchange():
         return jsonify({"error": str(e)}), 500
 
 
-# ===================== MICHAEL KORS (PARALLEL) =====================
+# ===================== MICHAEL KORS (PARALLEL CDN) =====================
 @app.route('/scrape-michael-kors', methods=['POST'])
 def scrape_michael_kors():
-    """MICHAEL KORS - 2 varijante boje × 8 pozicija - PARALLEL"""
+    """MICHAEL KORS - Scene7 CDN with color variants - PARALLEL"""
     try:
         data = request.json
-        sku = data.get('sku', '').strip()
+        sku = data.get('sku', '').strip().upper()
         max_images = data.get('max_images', 5)
-        
+
         if not sku:
             return jsonify({"error": "SKU required"}), 400
-        
+
         parts = sku.split('-')
         if len(parts) != 2:
             return jsonify({"error": f"Invalid SKU format: {sku}"}), 400
-        
+
         code_part = parts[0]
-        color = parts[1].zfill(4)
-        
-        if code_part.startswith('MCC'):
-            product = code_part[2:]
-        elif code_part.startswith('MC'):
-            product = code_part[2:]
+        color = parts[1]
+
+        # Remove MC prefix
+        if code_part.startswith('MC'):
+            model = code_part[2:]
         else:
-            product = code_part
-        
-        color_variants = [color, color.lstrip('0') or '0']
-        
-        # Build all URLs
+            model = code_part
+
+        # Color variants - add leading zeros (MK uses 4-digit internal codes)
+        # SKU 251 → try 0251, 251, 00251
+        color_variants = [
+            f"0{color}",           # Add one leading zero
+            color,                  # Original
+            color.zfill(4),         # Pad to 4 digits
+            color.lstrip('0') or '0',  # Strip leading zeros
+        ]
+        color_variants = list(set(color_variants))
+
+        # Build Scene7 URLs
         url_list = []
         for clr in color_variants:
             for i in range(1, 9):
-                url = f"https://michaelkors.scene7.com/is/image/MichaelKors/{product}-{clr}_{i}?wid=1200&hei=1500&fmt=jpg"
+                # Format: {model}-{color}_{position}
+                url = f"https://michaelkors.scene7.com/is/image/MichaelKors/{model}-{clr}_{i}?$large$"
                 url_list.append((url, {"color": clr, "position": i}))
-        
+
         # Validate in parallel
-        images = validate_urls_parallel(url_list, max_images=max_images)
-        
+        images = validate_urls_parallel(url_list, max_images=max_images, min_bytes=5000)
+
+        # Get working color from first image
+        working_color = images[0].get("color") if images else color
+
         for idx, img in enumerate(images):
             img["index"] = idx + 1
-            img["filename"] = f"{sku.replace('-', '_')}-{idx + 1}"
-        
-        return jsonify({"sku": sku, "brand_code": f"{product}-{color}", "images": images, "count": len(images)})
+            img["filename"] = f"{sku.replace('-', '_')}-{idx + 1}.jpg"
+
+        return jsonify({"sku": sku, "brand_code": f"{model}-{working_color}", "images": images, "count": len(images)})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -1271,6 +1299,27 @@ def scrape_replay():
         return jsonify({"error": str(e)}), 500
 
 
+# ===================== SUPERDRY =====================
+@app.route('/scrape-superdry', methods=['POST'])
+def scrape_superdry():
+    """SUPERDRY - website scraping (random CDN IDs)"""
+    try:
+        from scrapers import superdry
+        data = request.json
+        sku = data.get('sku', '').strip()
+        max_images = data.get('max_images', 5)
+
+        if not sku:
+            return jsonify({"error": "SKU required"}), 400
+
+        result = superdry.scrape(sku, max_images)
+        return jsonify(result)
+    except ImportError:
+        return jsonify({"error": "Superdry scraper module not found"}), 500
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 # ===================== JOOP =====================
 @app.route('/scrape-joop', methods=['POST'])
 def scrape_joop():
@@ -1461,6 +1510,7 @@ def scrape_generic():
         'REPLAY': scrape_replay,
         
         # SCRAPER BRANDS (require scrapers/ modules)
+        'SUPERDRY': scrape_superdry, 'SD': scrape_superdry,
         'JOOP': scrape_joop,
         'STRELLSON': scrape_strellson,
         'WOOLRICH': scrape_woolrich,
