@@ -1105,58 +1105,62 @@ def scrape_replay():
         data = request.json
         sku = data.get('sku', '').strip()
         max_images = data.get('max_images', 5)
-        
+
         if not sku:
             return jsonify({"error": "SKU required"}), 400
-        
+
         WATERMARK_HASHES = {"b7b532cb2ea2ae3c91decf2bc87b1c01"}
         WATERMARK_SIZE = 26238
-        
+        MIN_REPLAY_BYTES = 60000  # Filter out small placeholders
+
         def parse_replay_sku(s):
             s = s.strip()
             if s.startswith('R'):
                 s = s[1:]
-            
+
+            # Format: M3015 {2660}323 or AW2608 {A0500C}0103
             match = re.match(r'^([A-Z0-9]+)\s*\{([^}]+)\}(.+)$', s)
             if match:
                 model = match.group(1)
-                fabric = match.group(2).replace(' ', '-')
-                color = match.group(3)
-                return f"{model}_000_{fabric}_{color}", model
-            
-            match2 = re.match(r'^([A-Z]+\d+[A-Z]?)([A-Z]\d+[A-Z]?\d*)(\d{3,4})$', s)
-            if match2:
-                model = match2.group(1)
-                fabric = match2.group(2)
-                color = match2.group(3)
-                return f"{model}_000_{fabric}_{color}", model
-            
+                fabric = match.group(2).replace(' ', '')  # Remove spaces from fabric
+                color = match.group(3).strip()
+                # Return list of codes to try (000 and 001)
+                return [
+                    f"{model}_000_{fabric}_{color}",
+                    f"{model}_001_{fabric}_{color}",
+                ], model
+
             return None, None
-        
-        cdn_code, model = parse_replay_sku(sku)
-        if not cdn_code:
+
+        cdn_codes, model = parse_replay_sku(sku)
+        if not cdn_codes:
             return jsonify({"error": f"Invalid SKU format: {sku}"}), 400
-        
+
         CDN_BASE = "https://replayjeans.kleecks-cdn.com"
-        REGIONS = ["gr", "it", "de", "fr", "es", "eu", "uk"]
-        IMG_PARAMS = "?optimize=low&bg-color=255,255,255&fit=bounds&height=1200&width=900&canvas=900:1200"
-        
-        d1 = cdn_code[0]
-        d2 = cdn_code[1]
-        
-        # Build all URLs for all regions
+        # All locales from working local code
+        LOCALES = ["it", "fr", "de", "es", "pt", "nl", "pl", "gr", "cz", "ro", "hu", "sk", "bg", "hr", "si", "at", "gb", "us"]
+
+        # Build all URLs - try both 000 and 001, positions 1-5 and _2_1 to _2_5
         url_list = []
-        for region in REGIONS:
-            for pos in range(1, 11):
-                url = f"{CDN_BASE}/{region}/media/catalog/product/{d1}/{d2}/{cdn_code}_{pos}.jpg{IMG_PARAMS}"
-                url_list.append((url, {"region": region, "position": pos}))
-        
+        for cdn_code in cdn_codes:
+            d1, d2 = cdn_code[0], cdn_code[1]
+            for loc in LOCALES:
+                root = f"{CDN_BASE}/{loc}/media/catalog/product/{d1}/{d2}"
+                # Primary positions 1-5
+                for i in range(1, 6):
+                    url = f"{root}/{cdn_code}_{i}.jpg"
+                    url_list.append((url, {"locale": loc, "position": i, "code": cdn_code}))
+                # Secondary positions _2_1 to _2_5
+                for i in range(1, 6):
+                    url = f"{root}/{cdn_code}_2_{i}.jpg"
+                    url_list.append((url, {"locale": loc, "position": f"2_{i}", "code": cdn_code}))
+
         # Custom parallel validation with watermark filter
         def validate_replay_url(args):
-            url, metadata, _, min_bytes = args
+            url, metadata = args
             try:
-                r = session.get(url, timeout=12)
-                if r.status_code == 200 and len(r.content) >= 8000:
+                r = session.get(url, timeout=10)
+                if r.status_code == 200 and len(r.content) >= MIN_REPLAY_BYTES:
                     ctype = r.headers.get("Content-Type", "").lower()
                     if "image" in ctype:
                         if len(r.content) == WATERMARK_SIZE:
@@ -1168,14 +1172,13 @@ def scrape_replay():
             except:
                 pass
             return (url, False, None, None, metadata)
-        
+
         # Validate in parallel
-        args_list = [(url, meta, None, 8000) for url, meta in url_list]
         url_order = {url: idx for idx, (url, _) in enumerate(url_list)}
         results = []
-        
+
         with ThreadPoolExecutor(max_workers=MAX_VALIDATION_WORKERS) as executor:
-            futures = [executor.submit(validate_replay_url, args) for args in args_list]
+            futures = [executor.submit(validate_replay_url, args) for args in url_list]
             for future in as_completed(futures):
                 try:
                     result = future.result()
@@ -1183,23 +1186,28 @@ def scrape_replay():
                         results.append(result)
                 except:
                     pass
-        
+
+        # Sort by original order to maintain position priority
         results.sort(key=lambda x: url_order.get(x[0], 999))
-        
+
         images = []
         seen_hashes = set()
+        working_code = None
+
         for url, is_valid, content, img_hash, metadata in results:
             if len(images) >= max_images:
                 break
             if img_hash and img_hash not in seen_hashes:
                 seen_hashes.add(img_hash)
-                images.append({"url": url, "region": metadata["region"], "position": metadata["position"]})
-        
+                if not working_code:
+                    working_code = metadata["code"]
+                images.append({"url": url, "locale": metadata["locale"], "position": metadata["position"]})
+
         for idx, img in enumerate(images):
             img["index"] = idx + 1
             img["filename"] = f"{re.sub(r'[{}]', '', sku).replace(' ', '_')}-{idx + 1}"
-        
-        return jsonify({"sku": sku, "brand_code": cdn_code, "images": images, "count": len(images)})
+
+        return jsonify({"sku": sku, "brand_code": working_code or cdn_codes[0], "images": images, "count": len(images)})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
