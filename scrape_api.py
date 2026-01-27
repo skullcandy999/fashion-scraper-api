@@ -244,8 +244,9 @@ def scrape_mango():
             candidate_urls.append(f"{BASE_IMG}/S/{their_code}_D{d}.jpg{IMG_PARAM}")
         
         # Create session with Mango headers
+        # IMPORTANT: Request JPEG format, not AVIF (Modal can't process AVIF)
         mango_session = make_session({
-            "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
+            "Accept": "image/jpeg,image/*;q=0.8",
             "Referer": "https://shop.mango.com/",
             "Accept-Language": "en-US,en;q=0.9"
         })
@@ -365,7 +366,7 @@ def scrape_allsaints():
         their_code = re.sub(r"\s+", "-", their_code.strip())
         
         as_session = make_session({
-            "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
+            "Accept": "image/jpeg,image/*;q=0.8",
             "Referer": "https://www.allsaints.com/"
         })
         
