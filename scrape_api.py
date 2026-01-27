@@ -234,13 +234,16 @@ def scrape_mango():
         IMG_PARAM = "?imwidth=2048&imdensity=1"
         
         # Build candidate URLs
+        # Order: Main, Outfit, R, D1 (detail), B (packshot as 5th)
         candidate_urls = []
-        candidate_urls.append(f"{BASE_IMG}/S/{their_code}.jpg{IMG_PARAM}")
+        candidate_urls.append(f"{BASE_IMG}/S/{their_code}.jpg{IMG_PARAM}")           # 1. Main
         for i in range(1, 5):
-            candidate_urls.append(f"{BASE_IMG}/outfit/S/{their_code}-99999999_{i:02}.jpg{IMG_PARAM}")
-        candidate_urls.append(f"{BASE_IMG}/S/{their_code}_R.jpg{IMG_PARAM}")
-        candidate_urls.append(f"{BASE_IMG}/S/{their_code}_B.jpg{IMG_PARAM}")
-        for d in range(1, 13):
+            candidate_urls.append(f"{BASE_IMG}/outfit/S/{their_code}-99999999_{i:02}.jpg{IMG_PARAM}")  # 2. Outfit
+        candidate_urls.append(f"{BASE_IMG}/S/{their_code}_R.jpg{IMG_PARAM}")         # 3. R (rear)
+        candidate_urls.append(f"{BASE_IMG}/S/{their_code}_D1.jpg{IMG_PARAM}")        # 4. D1 (detail)
+        candidate_urls.append(f"{BASE_IMG}/S/{their_code}_B.jpg{IMG_PARAM}")         # 5. B (packshot)
+        # Additional details if needed
+        for d in range(2, 13):
             candidate_urls.append(f"{BASE_IMG}/S/{their_code}_D{d}.jpg{IMG_PARAM}")
         
         # Create session with Mango headers
