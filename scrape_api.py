@@ -882,40 +882,70 @@ def scrape_emporio_armani():
 # ===================== ARMANI EXCHANGE (PARALLEL) =====================
 @app.route('/scrape-armani-exchange', methods=['POST'])
 def scrape_armani_exchange():
-    """ARMANI EXCHANGE - 3 sezone × 5 sufiksa - PARALLEL"""
+    """ARMANI EXCHANGE - multiple CDN code patterns - PARALLEL"""
     try:
         data = request.json
         sku = data.get('sku', '').strip()
         max_images = data.get('max_images', 5)
-        
+
         if not sku:
             return jsonify({"error": "SKU required"}), 400
-        
+
         base = sku.replace("AR", "")
         parts = base.split("-")
         if len(parts) != 3:
             return jsonify({"error": f"Invalid SKU format: {sku}"}), 400
-        
-        ax_code = f"XM{parts[0]}_AF{parts[1]}_{parts[2]}"
-        
-        SEASONS = ['FW2025', 'SS2025', 'FW2024']
+
+        part1, part2, part3 = parts
+
+        # Build possible ARTIKAL variants based on first part format
+        artikal_variants = []
+        if part1.isdigit():
+            # Pure numeric (like 942910) - try without prefix first, then with XM/XW
+            artikal_variants = [part1, f"XM{part1}", f"XW{part1}"]
+        elif part1[0].isdigit():
+            # Starts with digit (like 8NZTCK) - try with 8N prefix variants
+            artikal_variants = [part1, f"8N{part1}" if not part1.startswith("8N") else part1]
+        else:
+            # Starts with letter (like UP001 from ARXUP001) - try XU variants
+            artikal_variants = [f"X{part1}", part1, f"XM{part1}", f"XW{part1}"]
+
+        # Build possible STIL variants based on second part format
+        if part2[0].isdigit():
+            # Starts with digit - add AF prefix
+            stil_variants = [f"AF{part2}"]
+        else:
+            # Starts with letter (like XV820, CC783, ZN10Z) - use as-is
+            stil_variants = [part2]
+
+        # Build all CDN code combinations
+        cdn_codes = []
+        for artikal in artikal_variants:
+            for stil in stil_variants:
+                cdn_codes.append(f"{artikal}_{stil}_{part3}")
+
+        SEASONS = ['FW2025', 'SS2025', 'FW2024', 'SS2024']
         SUFFIXES = ["F", "D", "R", "E", "A"]
-        
-        # Build all URLs
+
+        # Build all URLs for all code variants
         url_list = []
-        for season in SEASONS:
-            for suf in SUFFIXES:
-                url = f"https://assets.armani.com/image/upload/f_auto,q_auto:best,ar_4:5,w_1350,c_fill/{ax_code}_{suf}_{season}.jpg"
-                url_list.append((url, {"season": season, "suffix": suf}))
-        
+        for cdn_code in cdn_codes:
+            for season in SEASONS:
+                for suf in SUFFIXES:
+                    url = f"https://assets.armani.com/image/upload/f_auto,q_auto:best,ar_4:5,w_1350,c_fill/{cdn_code}_{suf}_{season}.jpg"
+                    url_list.append((url, {"season": season, "suffix": suf, "code": cdn_code}))
+
         # Validate in parallel
-        images = validate_urls_parallel(url_list, max_images=max_images)
-        
+        images = validate_urls_parallel(url_list, max_images=max_images, min_bytes=5000)
+
+        # Get the working code from first image
+        working_code = images[0].get("code") if images else cdn_codes[0]
+
         for idx, img in enumerate(images):
             img["index"] = idx + 1
             img["filename"] = f"{sku.replace('-', '_')}-{idx + 1}"
-        
-        return jsonify({"sku": sku, "brand_code": ax_code, "images": images, "count": len(images)})
+
+        return jsonify({"sku": sku, "brand_code": working_code, "images": images, "count": len(images)})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
