@@ -525,18 +525,47 @@ from scrapers import diesel
 
 @app.route('/scrape-diesel', methods=['POST'])
 def scrape_diesel():
-    """DIESEL - uses scrapers/diesel.py module"""
+    """DIESEL - PARALLEL with correct view suffixes"""
     try:
         data = request.json
-        sku = data.get('sku', '').strip()
+        sku = data.get('sku', '').strip().upper()
         max_images = data.get('max_images', 5)
-        
+
         if not sku:
             return jsonify({"error": "SKU required"}), 400
-        
-        result = diesel.scrape(sku, max_images=max_images)
-        return jsonify(result)
-        
+
+        # Parse SKU: DSA06268 0AFAA 100 → A06268_0AFAA_100
+        parts = sku.replace("-", " ").split()
+        if len(parts) < 3:
+            return jsonify({"error": f"Invalid SKU format: {sku}"}), 400
+
+        # Convert prefix: DSA→A, DSX→X, DSY→Y
+        first_part = parts[0]
+        if first_part.startswith("DS"):
+            prefix_map = {"DSA": "A", "DSX": "X", "DSY": "Y"}
+            prefix = first_part[:3]
+            if prefix in prefix_map:
+                first_part = prefix_map[prefix] + first_part[3:]
+            else:
+                first_part = first_part[2:]  # Just remove DS
+
+        code = f"{first_part}_{parts[1]}_{parts[2]}"
+
+        BASE = "https://shop.diesel.com/dw/image/v2/BBLG_PRD/on/demandware.static/-/Sites-diesel-master-catalog/default/images/large"
+        VIEWS = ["C", "E", "F", "I", "B", "D", "A", "G", "H"]
+
+        # Build all URLs
+        url_list = [(f"{BASE}/{code}_{view}.jpg?sw=1200&sh=1600&sm=fit", {"view": view}) for view in VIEWS]
+
+        # Validate in parallel with 20KB minimum
+        images = validate_urls_parallel(url_list, min_bytes=20000, max_images=max_images)
+
+        for idx, img in enumerate(images):
+            img["index"] = idx + 1
+            img["filename"] = f"{sku.replace(' ', '_')}-{idx + 1}.jpg"
+
+        return jsonify({"sku": sku, "brand_code": code, "images": images, "count": len(images)})
+
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
