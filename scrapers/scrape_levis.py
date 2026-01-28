@@ -38,24 +38,29 @@ def convert_sku(sku):
     return code
 
 
-def check_url(url):
-    """Check if image URL is valid"""
+def check_url_head(url):
+    """Fast HEAD check - doesn't download image"""
     try:
-        r = requests.get(url, headers=HEADERS, timeout=TIMEOUT)
-        if r.status_code == 200 and len(r.content) > MIN_VALID_BYTES:
-            return True
+        r = requests.head(url, headers=HEADERS, timeout=5)
+        if r.status_code == 200:
+            # Check content-length header
+            content_length = int(r.headers.get('content-length', 0))
+            if content_length > MIN_VALID_BYTES:
+                return True
     except:
         pass
     return False
 
 
-def check_url_parallel(args):
-    """For parallel checking"""
+def check_url_head_parallel(args):
+    """For parallel HEAD checking - much faster"""
     url, idx = args
     try:
-        r = requests.get(url, headers=HEADERS, timeout=TIMEOUT)
-        if r.status_code == 200 and len(r.content) > MIN_VALID_BYTES:
-            return (idx, url, True)
+        r = requests.head(url, headers=HEADERS, timeout=5)
+        if r.status_code == 200:
+            content_length = int(r.headers.get('content-length', 0))
+            if content_length > MIN_VALID_BYTES:
+                return (idx, url, True)
     except:
         pass
     return (idx, url, False)
@@ -75,10 +80,10 @@ def find_working_combo(sku_code):
             combos_to_test.append((url, idx, prefix, middle))
             idx += 1
 
-    # Test in parallel
+    # Test in parallel using fast HEAD requests
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
         futures = {
-            executor.submit(check_url_parallel, (c[0], c[1])): c
+            executor.submit(check_url_head_parallel, (c[0], c[1])): c
             for c in combos_to_test
         }
         for future in as_completed(futures):
@@ -118,24 +123,23 @@ def scrape_levis(sku, max_images=5):
         url = f"{BASE_URL}/{prefix}{sku_code}_{middle}{view}{QS}"
         urls_to_check.append((url, i))
 
-    # Check all views in parallel
+    # Check all views in parallel using fast HEAD requests
     valid_images = []
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-        futures = [executor.submit(check_url_parallel, args) for args in urls_to_check]
+        futures = [executor.submit(check_url_head_parallel, args) for args in urls_to_check]
         for future in as_completed(futures):
             idx, url, is_valid = future.result()
             if is_valid:
                 valid_images.append((idx, url))
 
-    # Also check alternate middles for more variety
+    # Also check alternate middles for more variety (skip if we have enough)
     if len(valid_images) < max_images:
         for alt_middle in MIDDLES:
             if alt_middle == middle:
                 continue
             for i, view in enumerate(VIEWS):
                 url = f"{BASE_URL}/{prefix}{sku_code}_{alt_middle}{view}{QS}"
-                if check_url(url):
-                    # Add with high index so it comes after primary images
+                if check_url_head(url):
                     valid_images.append((100 + len(valid_images), url))
                     if len(valid_images) >= max_images + 2:
                         break
