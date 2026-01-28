@@ -15,6 +15,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # Import scraper modula
 from scrapers import dsquared2
+from scrapers import emporio_armani
 
 
 app = Flask(__name__)
@@ -487,6 +488,25 @@ def scrape_dsquared2_endpoint():
         return jsonify({"error": str(e), "sku": "", "images": []}), 500
 
 
+# ===================== EMPORIO ARMANI =====================
+@app.route('/scrape-emporio-armani', methods=['POST'])
+def scrape_emporio_armani_endpoint():
+    """EMPORIO ARMANI - uses scrapers/emporio_armani.py module"""
+    try:
+        data = request.json
+        sku = data.get('sku', '').strip()
+        max_images = data.get('max_images', 5)
+        validate = data.get('validate', False)
+
+        if not sku:
+            return jsonify({"error": "SKU required", "sku": sku, "images": []}), 400
+
+        result = emporio_armani.scrape(sku, max_images, validate)
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"error": str(e), "sku": "", "images": []}), 500
+
+
 # ===================== CALVIN KLEIN (PARALLEL) =====================
 @app.route('/scrape-calvin-klein', methods=['POST'])
 def scrape_calvin_klein():
@@ -878,51 +898,8 @@ def scrape_guess():
         return jsonify({"error": str(e)}), 500
 
 
-# ===================== EMPORIO ARMANI (PARALLEL) =====================
-@app.route('/scrape-emporio-armani', methods=['POST'])
-def scrape_emporio_armani():
-    """EMPORIO ARMANI - 4 sezone × 3 sufiksa - PARALLEL"""
-    try:
-        data = request.json
-        sku = data.get('sku', '').strip().replace(" ", "")
-        max_images = data.get('max_images', 5)
-        
-        if not sku:
-            return jsonify({"error": "SKU required"}), 400
-        
-        if not sku.startswith(("EAEM", "EAEW")):
-            return jsonify({"error": f"Invalid SKU format: {sku}"}), 400
-        
-        code = sku[2:]
-        if len(code) < 16:
-            return jsonify({"error": f"SKU too short: {sku}"}), 400
-        
-        brand = code[:2]
-        model = code[2:8]
-        fabric = code[8:13]
-        color = code[13:]
-        armani_code = f"{brand}{model}_AF{fabric}_{color}"
-        
-        SEASONS = ['FW2025', 'SS2025', 'FW2024', 'SS2024']
-        SUFFIXES = ['F', 'D', 'R']
-        
-        # Build all URLs
-        url_list = []
-        for season in SEASONS:
-            for suf in SUFFIXES:
-                url = f"https://assets-cf.armani.com/image/upload/f_auto,q_auto:best,ar_4:5,w_1350,c_fill/{armani_code}_{suf}_{season}.jpg"
-                url_list.append((url, {"season": season, "suffix": suf}))
-        
-        # Validate in parallel
-        images = validate_urls_parallel(url_list, max_images=max_images)
-        
-        for idx, img in enumerate(images):
-            img["index"] = idx + 1
-            img["filename"] = f"{sku}-{idx + 1}"
-        
-        return jsonify({"sku": sku, "brand_code": armani_code, "images": images, "count": len(images)})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+# ===================== EMPORIO ARMANI =====================
+# Now uses scrapers/emporio_armani.py module with multiple prefix detection (AF, TE, etc.)
 
 
 # ===================== ARMANI EXCHANGE (PARALLEL) =====================
@@ -1459,7 +1436,7 @@ def scrape_generic():
         'SCOTCH SODA': scrape_scotch_soda, 'SCOTCH & SODA': scrape_scotch_soda,
         'ETRO': scrape_etro,
         'GUESS': scrape_guess,
-        'EMPORIO ARMANI': scrape_emporio_armani, 'EA': scrape_emporio_armani,
+        'EMPORIO ARMANI': scrape_emporio_armani_endpoint, 'EA': scrape_emporio_armani_endpoint,
         'ARMANI EXCHANGE': scrape_armani_exchange, 'AX': scrape_armani_exchange,
         'MICHAEL KORS': scrape_michael_kors, 'MK': scrape_michael_kors,
         'PATRIZIA PEPE': scrape_patrizia_pepe, 'PP': scrape_patrizia_pepe,
