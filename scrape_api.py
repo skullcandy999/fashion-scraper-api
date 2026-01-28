@@ -1161,7 +1161,7 @@ def scrape_replay():
 
         WATERMARK_HASHES = {"b7b532cb2ea2ae3c91decf2bc87b1c01"}
         WATERMARK_SIZE = 26238
-        MIN_REPLAY_BYTES = 60000  # Filter out small placeholders
+        MIN_REPLAY_BYTES = 8000  # Lowered to match working local script
 
         def parse_replay_sku(s):
             s = s.strip()
@@ -1174,7 +1174,7 @@ def scrape_replay():
                 model = match.group(1)
                 fabric = match.group(2).replace(' ', '-')  # Replace spaces with dash
                 color = match.group(3).strip()
-                # Try multiple mid variants (000, 001, 002, 006, 007, 009, 010, 050, 051, 055, 064)
+                # Mid variants - 000 is most common, then others
                 MID_VARIANTS = ["000", "001", "002", "006", "007", "009", "010", "050", "051", "055", "064"]
                 codes = [f"{model}_{mid}_{fabric}_{color}" for mid in MID_VARIANTS]
                 return codes, model
@@ -1186,23 +1186,19 @@ def scrape_replay():
             return jsonify({"error": f"Invalid SKU format: {sku}"}), 400
 
         CDN_BASE = "https://replayjeans.kleecks-cdn.com"
-        # All locales - EU + US + CA
-        LOCALES = ["it", "de", "fr", "gr", "es", "pt", "nl", "pl", "cz", "ro", "hu", "sk", "bg", "hr", "si", "at", "gb", "us", "be", "dk", "fi", "ie", "se", "no", "ch", "ca"]
+        # Priority regions that work best (from user's local script)
+        LOCALES = ["gr", "it", "de", "fr", "es", "eu", "uk", "us"]
 
-        # Build all URLs - try both 000 and 001, positions 1-5 and _2_1 to _2_5
+        # Build URLs - prioritize 000 mid variant first, then others
         url_list = []
         for cdn_code in cdn_codes:
             d1, d2 = cdn_code[0], cdn_code[1]
             for loc in LOCALES:
                 root = f"{CDN_BASE}/{loc}/media/catalog/product/{d1}/{d2}"
-                # Primary positions 1-5
-                for i in range(1, 6):
+                # Primary positions 1-10
+                for i in range(1, 11):
                     url = f"{root}/{cdn_code}_{i}.jpg"
                     url_list.append((url, {"locale": loc, "position": i, "code": cdn_code}))
-                # Secondary positions _2_1 to _2_5
-                for i in range(1, 6):
-                    url = f"{root}/{cdn_code}_2_{i}.jpg"
-                    url_list.append((url, {"locale": loc, "position": f"2_{i}", "code": cdn_code}))
 
         # Custom parallel validation with watermark filter
         def validate_replay_url(args):
