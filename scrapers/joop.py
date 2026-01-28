@@ -29,21 +29,21 @@ SESSION = make_session()
 
 def convert_sku(sku):
     """
-    JP10014360-33196-303 → 30033196-10014360-303
+    JP10017927-00030-001 → 30100030-10017927-001
     - Ukloni JP
     - Zameni prvi i drugi deo
-    - Dodaj 300 ispred drugog dela
+    - Dodaj 301 ispred drugog dela (koji postaje prvi)
     """
     clean = sku.strip()
     if clean.startswith('JP'):
         clean = clean[2:]
-    
+
     parts = clean.split('-')
     if len(parts) == 3:
-        part1 = parts[0]  # 10014360
-        part2 = parts[1]  # 33196
-        color = parts[2]  # 303
-        return f"300{part2}-{part1}-{color}"
+        part1 = parts[0]  # 10017927
+        part2 = parts[1]  # 00030
+        color = parts[2]  # 001
+        return f"301{part2}-{part1}-{color}"
     return None
 
 
