@@ -1174,11 +1174,10 @@ def scrape_replay():
                 model = match.group(1)
                 fabric = match.group(2).replace(' ', '-')  # Replace spaces with dash
                 color = match.group(3).strip()
-                # Return list of codes to try (000 and 001)
-                return [
-                    f"{model}_000_{fabric}_{color}",
-                    f"{model}_001_{fabric}_{color}",
-                ], model
+                # Try multiple mid variants (000, 001, 002, 006, 007, 009, 010, 050, 051, 055, 064)
+                MID_VARIANTS = ["000", "001", "002", "006", "007", "009", "010", "050", "051", "055", "064"]
+                codes = [f"{model}_{mid}_{fabric}_{color}" for mid in MID_VARIANTS]
+                return codes, model
 
             return None, None
 
@@ -1187,8 +1186,8 @@ def scrape_replay():
             return jsonify({"error": f"Invalid SKU format: {sku}"}), 400
 
         CDN_BASE = "https://replayjeans.kleecks-cdn.com"
-        # All locales from working local code
-        LOCALES = ["it", "de", "fr", "gr", "es", "pt", "nl", "pl", "cz", "ro", "hu", "sk", "bg", "hr", "si", "at", "gb", "us"]
+        # All locales - EU + US + CA
+        LOCALES = ["it", "de", "fr", "gr", "es", "pt", "nl", "pl", "cz", "ro", "hu", "sk", "bg", "hr", "si", "at", "gb", "us", "be", "dk", "fi", "ie", "se", "no", "ch", "ca"]
 
         # Build all URLs - try both 000 and 001, positions 1-5 and _2_1 to _2_5
         url_list = []
