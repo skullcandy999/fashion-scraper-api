@@ -99,6 +99,9 @@ def scrape_levis(sku, max_images=5):
     """
     Scrape Levi's product images from Scene7 CDN
 
+    FAST VERSION: Only validates prefix/middle combo, then generates URLs.
+    Workflow API will validate during download step.
+
     Args:
         sku: Product SKU (e.g., "LV000LO-0033")
         max_images: Maximum number of images to return
@@ -111,52 +114,20 @@ def scrape_levis(sku, max_images=5):
     if not sku_code:
         return {"sku": sku, "images": [], "count": 0, "error": "Invalid SKU format"}
 
-    # Find working prefix/middle combo
+    # Find working prefix/middle combo (only validation needed)
     prefix, middle = find_working_combo(sku_code)
 
     if prefix is None:
         return {"sku": sku, "images": [], "count": 0, "error": f"No images found for {sku_code}"}
 
-    # Build URLs for all views with this combo
-    urls_to_check = []
-    for i, view in enumerate(VIEWS):
-        url = f"{BASE_URL}/{prefix}{sku_code}_{middle}{view}{QS}"
-        urls_to_check.append((url, i))
-
-    # Check all views in parallel using fast HEAD requests
-    valid_images = []
-    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-        futures = [executor.submit(check_url_head_parallel, args) for args in urls_to_check]
-        for future in as_completed(futures):
-            idx, url, is_valid = future.result()
-            if is_valid:
-                valid_images.append((idx, url))
-
-    # Also check alternate middles for more variety (skip if we have enough)
-    if len(valid_images) < max_images:
-        for alt_middle in MIDDLES:
-            if alt_middle == middle:
-                continue
-            for i, view in enumerate(VIEWS):
-                url = f"{BASE_URL}/{prefix}{sku_code}_{alt_middle}{view}{QS}"
-                if check_url_head(url):
-                    valid_images.append((100 + len(valid_images), url))
-                    if len(valid_images) >= max_images + 2:
-                        break
-            if len(valid_images) >= max_images + 2:
-                break
-
-    # Sort by priority and dedupe
-    valid_images.sort(key=lambda x: x[0])
-    seen = set()
+    # Generate URLs for all views - NO validation, workflow will filter
     images = []
-    for _, url in valid_images:
-        if url not in seen and len(images) < max_images:
-            seen.add(url)
-            images.append({
-                "url": url,
-                "index": len(images) + 1
-            })
+    for i, view in enumerate(VIEWS[:max_images]):
+        url = f"{BASE_URL}/{prefix}{sku_code}_{middle}{view}{QS}"
+        images.append({
+            "url": url,
+            "index": i + 1
+        })
 
     return {
         "sku": sku,
