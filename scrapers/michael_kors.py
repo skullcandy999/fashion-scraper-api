@@ -6,7 +6,6 @@ Uses direct website scraping - michaelkors.ae works without proxy
 
 import requests
 import re
-from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # Multiple domains to try (AE works best - no geo-blocking)
 BASE_DOMAINS = [
@@ -17,7 +16,6 @@ BASE_DOMAINS = [
 ]
 
 TIMEOUT = 12
-MAX_WORKERS = 8
 
 session = requests.Session()
 session.headers.update({
@@ -123,27 +121,6 @@ def extract_images(html, target_model, target_color):
 
     unique.sort(key=sort_key)
     return [u for (u, _, _) in unique]
-
-
-def validate_image(url):
-    """Check if URL returns valid image - lenient check"""
-    try:
-        # Use HEAD request first (faster)
-        r = session.head(url, timeout=5, allow_redirects=True)
-        if r.status_code == 200:
-            content_type = r.headers.get("Content-Type", "").lower()
-            if "image" in content_type:
-                return True
-            # Some CDNs don't return content-type on HEAD, do GET
-            r2 = session.get(url, timeout=8, stream=True)
-            if r2.status_code == 200:
-                chunk = r2.raw.read(20)
-                # Accept JPEG or any binary data > 1KB
-                if chunk[:3] == b'\xff\xd8\xff' or (len(chunk) > 10 and chunk[0] > 0):
-                    return True
-        return False
-    except:
-        return False
 
 
 def scrape(sku, max_images=5):
