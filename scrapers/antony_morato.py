@@ -8,15 +8,18 @@ SKU format:
 - Their: MMFL01118-FA150178-9000
 
 Prefix mapping varies (FA, LE, YA) - scraper probes all possibilities.
+Uses parallel workers for faster image discovery.
 """
 
 import requests
 from requests.adapters import HTTPAdapter, Retry
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ===================== CONFIGURATION =====================
-CDN_BASE = "https://cdn.antonymorato.com.filoblu.com/rx/ofmt_webp/media/catalog/product"
+CDN_BASE = "https://cdn.antonymorato.com.filoblu.com/rx/960x,ofmt_webp/media/catalog/product"
 TIMEOUT = 8
 MIN_SIZE = 1000
+MAX_WORKERS = 10
 
 # Prefix mapping - for ambiguous codes, lists all possibilities to try
 PREFIX_MAP = {
@@ -78,71 +81,74 @@ def convert_sku_candidates(our_sku):
     return candidates
 
 
+def check_url(url):
+    """Check if single URL exists."""
+    try:
+        r = session.head(url, timeout=TIMEOUT, allow_redirects=True)
+        if r.status_code == 200:
+            cl = r.headers.get("Content-Length")
+            return cl is None or int(cl) > MIN_SIZE
+    except:
+        pass
+    return False
+
+
 def check_cdn_url(morato_code):
     """Check if CDN URL exists, return first working URL or None."""
     fn = morato_code.upper()
-    fnL = fn.lower()
     d1, d2 = fn[0], fn[1]
-    d1L, d2L = d1.lower(), d2.lower()
 
-    for i in [1, 2]:
-        sfx = f"_{i:02d}.jpg"
-        urls = [
-            f"{CDN_BASE}/{d1}/{d2}/{fn}{sfx}",
-            f"{CDN_BASE}/{d1L}/{d2L}/{fnL}{sfx}",
-            f"{CDN_BASE}/{d1}/{d2}/{fn}-UN{sfx}",
-            f"{CDN_BASE}/{d1L}/{d2L}/{fnL}-UN{sfx}",
-        ]
+    # Try position 01 first
+    urls = [
+        f"{CDN_BASE}/{d1}/{d2}/{fn}_01.jpg",
+        f"{CDN_BASE}/{d1.lower()}/{d2.lower()}/{fn.lower()}_01.jpg",
+        f"{CDN_BASE}/{d1}/{d2}/{fn}-UN_01.jpg",
+    ]
 
-        for url in urls:
-            try:
-                r = session.head(url, timeout=TIMEOUT, allow_redirects=True)
-                if r.status_code == 200:
-                    cl = r.headers.get("Content-Length")
-                    if cl is None or int(cl) > MIN_SIZE:
-                        return url
-            except:
-                pass
+    for url in urls:
+        if check_url(url):
+            return url
 
     return None
 
 
-def get_all_images(morato_code, max_images=5):
-    """Get all image URLs for a working Morato code."""
+def get_all_images_parallel(morato_code, max_images=5):
+    """Get all image URLs using parallel workers."""
     fn = morato_code.upper()
-    fnL = fn.lower()
     d1, d2 = fn[0], fn[1]
-    d1L, d2L = d1.lower(), d2.lower()
 
+    # Build all candidate URLs (positions 01-10)
+    candidates = []
+    for i in range(1, 11):
+        sfx = f"_{i:02d}.jpg"
+        candidates.append((i, f"{CDN_BASE}/{d1}/{d2}/{fn}{sfx}"))
+        candidates.append((i, f"{CDN_BASE}/{d1.lower()}/{d2.lower()}/{fn.lower()}{sfx}"))
+        candidates.append((i, f"{CDN_BASE}/{d1}/{d2}/{fn}-UN{sfx}"))
+
+    # Check all in parallel
+    found_urls = {}
+
+    def check_candidate(item):
+        idx, url = item
+        if check_url(url):
+            return (idx, url)
+        return None
+
+    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+        futures = {executor.submit(check_candidate, c): c for c in candidates}
+        for future in as_completed(futures):
+            result = future.result()
+            if result:
+                idx, url = result
+                if idx not in found_urls:
+                    found_urls[idx] = url
+
+    # Sort by index and return up to max_images
     images = []
-    for i in range(1, max_images + 5):
+    for idx in sorted(found_urls.keys()):
         if len(images) >= max_images:
             break
-
-        sfx = f"_{i:02d}.jpg"
-        urls_to_try = [
-            f"{CDN_BASE}/{d1}/{d2}/{fn}{sfx}",
-            f"{CDN_BASE}/{d1L}/{d2L}/{fnL}{sfx}",
-            f"{CDN_BASE}/{d1}/{d2}/{fn}-UN{sfx}",
-            f"{CDN_BASE}/{d1L}/{d2L}/{fnL}-UN{sfx}",
-        ]
-
-        found = False
-        for url in urls_to_try:
-            try:
-                r = session.head(url, timeout=TIMEOUT, allow_redirects=True)
-                if r.status_code == 200:
-                    cl = r.headers.get("Content-Length")
-                    if cl is None or int(cl) > MIN_SIZE:
-                        images.append(url)
-                        found = True
-                        break
-            except:
-                pass
-
-        # If no image found at this index, stop looking
-        if not found and i > 1:
-            break
+        images.append(found_urls[idx])
 
     return images
 
@@ -191,8 +197,8 @@ def scrape(sku: str, max_images: int = 5, validate: bool = False) -> dict:
 
     result["morato_code"] = working_code
 
-    # Get all images
-    image_urls = get_all_images(working_code, max_images)
+    # Get all images in parallel
+    image_urls = get_all_images_parallel(working_code, max_images)
 
     if not image_urls:
         result["error"] = f"No images found for {working_code}"
