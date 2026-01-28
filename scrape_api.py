@@ -17,6 +17,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from scrapers import dsquared2
 from scrapers import emporio_armani
 from scrapers import etro as etro_module
+from scrapers import antony_morato
 
 
 app = Flask(__name__)
@@ -1054,56 +1055,24 @@ def scrape_sandro():
         return jsonify({"error": str(e)}), 500
 
 
-# ===================== ANTONY MORATO (PARALLEL) =====================
+# ===================== ANTONY MORATO (MODULE) =====================
 @app.route('/scrape-morato', methods=['POST'])
 def scrape_morato():
-    """ANTONY MORATO - kompleksna konverzija + 6 pozicija - PARALLEL"""
+    """ANTONY MORATO - uses module with prefix probing (FA, LE, YA)"""
     try:
         data = request.json
         sku = data.get('sku', '').strip()
         max_images = data.get('max_images', 5)
-        
+
         if not sku:
             return jsonify({"error": "SKU required"}), 400
-        
-        def get_prefix(cat):
-            if cat in ['BE', 'FW']: return ['LE', 'FA']
-            if cat == 'SW': return ['YA', 'FA']
-            return ['FA', 'LE', 'YA']
-        
-        their_codes = []
-        if len(sku) == 20 and sku[2:4] == 'DT':
-            cat, mod, fab, wash = sku[2:4], sku[4:9], sku[9:15], sku[15:20]
-            colors = ['7010', '9000', '7086', '2102']
-            for p in get_prefix(cat):
-                for c in colors:
-                    their_codes.append(f"MM{cat}{mod} {p}{fab} {c}-1-W{wash}")
-        elif len(sku) == 19:
-            cat, mod, fab, col = sku[2:4], sku[4:9], sku[9:15], sku[15:19]
-            for p in get_prefix(cat):
-                their_codes.append(f"MM{cat}{mod} {p}{fab} {col}")
-        
-        if not their_codes:
-            return jsonify({"error": f"Cannot convert SKU: {sku}"}), 400
-        
-        # Build all URLs
-        url_list = []
-        for their in their_codes:
-            fn = re.sub(r"\s+", "-", their.strip()).upper()
-            d1, d2 = fn[0], fn[1]
-            for i in range(1, 7):
-                url = f"https://cdn.antonymorato.com.filoblu.com/rx/960x,ofmt_webp/media/catalog/product/{d1}/{d2}/{fn}_0{i}.jpg"
-                url_list.append((url, {"code": their, "position": i}))
-        
-        # Validate in parallel
-        images = validate_urls_parallel(url_list, max_images=max_images)
-        
-        for idx, img in enumerate(images):
-            img["index"] = idx + 1
-            img["filename"] = f"{sku}-{idx + 1}"
-        
-        working_code = images[0].get("code", their_codes[0]) if images else their_codes[0]
-        return jsonify({"sku": sku, "brand_code": working_code, "images": images, "count": len(images)})
+
+        result = antony_morato.scrape(sku, max_images=max_images)
+
+        if result.get("error") and result.get("count", 0) == 0:
+            return jsonify(result), 404
+
+        return jsonify(result)
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
