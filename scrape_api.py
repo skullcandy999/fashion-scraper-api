@@ -1188,7 +1188,7 @@ def scrape_replay():
 
         CDN_BASE = "https://replayjeans.kleecks-cdn.com"
         # All locales from working local code
-        LOCALES = ["it", "fr", "de", "es", "pt", "nl", "pl", "gr", "cz", "ro", "hu", "sk", "bg", "hr", "si", "at", "gb", "us"]
+        LOCALES = ["eu", "it", "fr", "de", "es", "pt", "nl", "pl", "gr", "cz", "ro", "hu", "sk", "bg", "hr", "si", "at", "gb", "us"]
 
         # Build all URLs - try both 000 and 001, positions 1-5 and _2_1 to _2_5
         url_list = []
