@@ -113,88 +113,78 @@ def convert_to_high_res(url):
 
 def extract_image_urls_from_pdp(html_text, original_code, max_images=5):
     """
-    Parsira PDP i skuplja sve image URL-ove koji sadrže original_code.
+    Parsira PDP i skuplja SAMO image URL-ove koji sadrže TAČAN original_code.
+    Filtrira "Complete the Look" i druge proizvode.
     Vraća listu HIGH-RES URL-ova.
     """
     soup = BeautifulSoup(html_text, "html.parser")
     urls = []
     seen_bases = set()
+    original_lower = original_code.lower()
 
-    # 1) Traži sve tagove <img src=...> koji u src imaju original code
+    # 1) Traži sve tagove <img src=...> koji MORAJU imati original code
     for img in soup.find_all("img", src=True):
         src = img["src"]
-        if original_code.lower() in src.lower() or "dw/image" in src:
-            if src.startswith("//"):
-                src = "https:" + src
-
-            if is_thumbnail(src):
-                continue
-
-            base = src.split("?")[0]
-            if base not in seen_bases:
-                seen_bases.add(base)
-                urls.append(convert_to_high_res(src))
+        # STRICT: mora sadržati original_code
+        if original_lower not in src.lower():
+            continue
+        if "dw/image" not in src:
+            continue
+        if src.startswith("//"):
+            src = "https:" + src
+        if is_thumbnail(src):
+            continue
+        base = src.split("?")[0]
+        if base not in seen_bases:
+            seen_bases.add(base)
+            urls.append(convert_to_high_res(src))
 
     # 2) Traži data-src atribute (lazy loading slike)
     for img in soup.find_all("img", attrs={"data-src": True}):
         src = img["data-src"]
-        if original_code.lower() in src.lower() or "dw/image" in src:
+        # STRICT: mora sadržati original_code
+        if original_lower not in src.lower():
+            continue
+        if "dw/image" not in src:
+            continue
+        if src.startswith("//"):
+            src = "https:" + src
+        if is_thumbnail(src):
+            continue
+        base = src.split("?")[0]
+        if base not in seen_bases:
+            seen_bases.add(base)
+            urls.append(convert_to_high_res(src))
+
+    # 3) Traži srcset atribute - STRICT filtering
+    for img in soup.find_all("img", attrs={"srcset": True}):
+        srcset = img["srcset"]
+        for part in srcset.split(","):
+            part = part.strip()
+            if original_lower not in part.lower():
+                continue
+            if "dw/image" not in part:
+                continue
+            src = part.split()[0]
             if src.startswith("//"):
                 src = "https:" + src
-
-            if is_thumbnail(src):
-                continue
-
             base = src.split("?")[0]
             if base not in seen_bases:
                 seen_bases.add(base)
                 urls.append(convert_to_high_res(src))
 
-    # 3) Traži srcset atribute
-    for img in soup.find_all("img", attrs={"srcset": True}):
-        srcset = img["srcset"]
-        parts = srcset.split(",")
-        for part in parts:
-            part = part.strip()
-            if original_code.lower() in part.lower():
-                src = part.split()[0]
-                if src.startswith("//"):
-                    src = "https:" + src
-
-                base = src.split("?")[0]
-                if base not in seen_bases:
-                    seen_bases.add(base)
-                    urls.append(convert_to_high_res(src))
-
-    # 4) Regex fallback u HTML-u
+    # 4) Regex fallback - STRICT: pattern mora sadržati original_code
     if len(urls) < max_images:
-        found = re.findall(r'https?://[^"\']+dw/image/[^"\']+', html_text)
+        # Build pattern that requires original_code in URL
+        pattern = r'https?://[^"\'\s]+dw/image/[^"\'\s]*' + re.escape(original_code) + r'[^"\'\s]*\.jpg'
+        found = re.findall(pattern, html_text, re.IGNORECASE)
         for f in found:
-            if original_code.lower() in f.lower():
-                if is_thumbnail(f):
-                    continue
-
-                base = f.split("?")[0]
-                if base not in seen_bases:
-                    seen_bases.add(base)
-                    urls.append(convert_to_high_res(f))
-
-    # 5) Traži linkove u <a href>
-    for a in soup.find_all("a", href=True):
-        href = a["href"]
-        if original_code.lower() in href.lower() and ("dw/image" in href or ".jpg" in href.lower()):
-            if href.startswith("//"):
-                href = "https:" + href
-            if href.startswith("/"):
-                href = BASE_URL + href
-
-            if is_thumbnail(href):
+            if is_thumbnail(f):
                 continue
-
-            base = href.split("?")[0]
+            base = f.split("?")[0]
             if base not in seen_bases:
                 seen_bases.add(base)
-                urls.append(convert_to_high_res(href))
+                urls.append(convert_to_high_res(f))
 
     return urls[:max_images]
 
