@@ -16,6 +16,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 # Import scraper modula
 from scrapers import dsquared2
 from scrapers import emporio_armani
+from scrapers import etro as etro_module
 
 
 app = Flask(__name__)
@@ -825,40 +826,23 @@ def scrape_scotch_soda():
         return jsonify({"error": str(e)}), 500
 
 
-# ===================== ETRO (PARALLEL) =====================
+# ===================== ETRO =====================
 @app.route('/scrape-etro', methods=['POST'])
 def scrape_etro():
-    """ETRO - 5 sufiksa - PARALLEL"""
+    """ETRO - uses scrapers/etro.py module with multi-size CDN"""
     try:
         data = request.json
         sku = data.get('sku', '').strip()
         max_images = data.get('max_images', 5)
-        
+        validate = data.get('validate', True)
+
         if not sku:
-            return jsonify({"error": "SKU required"}), 400
-        
-        clean = sku[1:] if sku.startswith('E') else sku
-        parts = clean.split()
-        if len(parts) != 3:
-            return jsonify({"error": f"Invalid SKU format: {sku}"}), 400
-        
-        etro_code = f"{parts[0]}A{parts[1]}{parts[2]}"
-        
-        SUFFIXES = ["SF", "SB", "ST", "SS", "D"]
-        
-        # Build all URLs
-        url_list = [(f"https://content.etro.com/Adaptations/900/{etro_code}_{suffix}_01.jpg", {"suffix": suffix}) for suffix in SUFFIXES]
-        
-        # Validate in parallel
-        images = validate_urls_parallel(url_list, max_images=max_images)
-        
-        for idx, img in enumerate(images):
-            img["index"] = idx + 1
-            img["filename"] = f"{sku.replace(' ', '_')}-{idx + 1}"
-        
-        return jsonify({"sku": sku, "brand_code": etro_code, "images": images, "count": len(images)})
+            return jsonify({"error": "SKU required", "sku": sku, "images": []}), 400
+
+        result = etro_module.scrape(sku, max_images, validate)
+        return jsonify(result)
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": str(e), "sku": "", "images": []}), 500
 
 
 # ===================== GUESS (PARALLEL) =====================
