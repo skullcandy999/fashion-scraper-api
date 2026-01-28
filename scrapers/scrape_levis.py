@@ -42,11 +42,17 @@ def get_session():
 
 def convert_sku(sku):
     """
-    Convert SKU to Levi's numeric format
-    LV0002L-0011 → 00020011
+    Convert SKU to Levi's Scene7 format
+    LV000LO-0033 → 000LO0033
+    LVA3381-0000 → A33810000
+
+    Rule: Remove LV prefix and dashes, keep everything else (including letters)
     """
-    numeric = re.sub(r"\D+", "", sku)
-    return numeric
+    code = sku.strip().upper()
+    if code.startswith('LV'):
+        code = code[2:]
+    code = code.replace('-', '')
+    return code
 
 
 def check_single_image(args):
