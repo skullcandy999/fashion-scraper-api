@@ -1,6 +1,7 @@
 """
 DSQUARED2 Scraper Module
-Koristi search-based pristup + filtriranje po BOJI
+Koristi lookup tabelu za mapiranje SKU -> full original code
+Fallback na search ako SKU nije u tabeli
 """
 
 import requests
@@ -8,22 +9,38 @@ from bs4 import BeautifulSoup
 import re
 import time
 
+# Import lookup table
+try:
+    from scrapers.dsquared2_lookup import get_full_code, DSQUARED2_LOOKUP
+except ImportError:
+    from dsquared2_lookup import get_full_code, DSQUARED2_LOOKUP
+
 # ============================================
 # CONFIGURATION
 # ============================================
 
 HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-    "Accept-Language": "en-US,en;q=0.9",
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
 }
 
 HIGH_RES_PARAMS = "?sw=2000&sh=3000&sm=fit&q=100"
 BASE_URL = "https://www.dsquared2.com"
+TIMEOUT = 15
 
 # ============================================
 # HELPER FUNCTIONS
 # ============================================
+
+def request_url(url, timeout=TIMEOUT):
+    """Simple request with error handling"""
+    try:
+        r = requests.get(url, headers=HEADERS, timeout=timeout)
+        if r.status_code == 200:
+            return r
+    except Exception as e:
+        pass
+    return None
+
 
 def extract_model_code(sku: str) -> str:
     """
@@ -43,201 +60,171 @@ def extract_color_code(sku: str) -> str:
     """
     Izvlači BOJU iz SKU.
     DQS71GD1572-205 → 205
-    DQBCM0376-2124 → 2124
-    DQS74GU0894-860M → 860M
     """
     if "-" in sku:
         return sku.split("-")[-1]
     return ""
 
 
-def find_product_page(model_code: str, color_code: str, session: requests.Session) -> tuple:
+def find_pdp_by_original(original_code):
     """
-    Pronalazi product page za TAČNU BOJU.
-    Vraća (pdp_url, html_content) ili (None, None)
+    Traži PDP preko site search. Vraća prvi link koji u href sadrži original_code.
     """
-    # Pokušaj direktne URL-ove sa bojom
-    # Format: model + middle_code + color (npr. S71GD1572D20035205)
-    direct_patterns = [
-        f"{BASE_URL}/us/{model_code}.html",
-        f"{BASE_URL}/us/{model_code.lower()}.html",
+    search_paths = [
+        f"{BASE_URL}/us/search?q={original_code}",
+        f"{BASE_URL}/us/search?text={original_code}",
+        f"{BASE_URL}/search?q={original_code}",
+        f"{BASE_URL}/search?text={original_code}"
     ]
-    
-    for url in direct_patterns:
-        try:
-            r = session.get(url, headers=HEADERS, timeout=15)
-            if r.status_code == 200:
-                # Proveri da li stranica sadrži našu boju
-                if color_code.lower() in r.text.lower():
-                    return (url, r.text)
-        except:
-            pass
+    for url in search_paths:
+        r = request_url(url)
+        if not r:
+            continue
+        html = r.text
+        soup = BeautifulSoup(html, "html.parser")
+        for a in soup.find_all("a", href=True):
+            href = a["href"]
+            if original_code.lower() in href.lower():
+                if href.startswith("http"):
+                    return href
+                if href.startswith("/"):
+                    return BASE_URL + href
+                return BASE_URL + "/" + href
         time.sleep(0.1)
-    
-    # Fallback: search sa modelom
-    search_urls = [
-        f"{BASE_URL}/us/search?q={model_code}",
-        f"{BASE_URL}/search?q={model_code}",
-        # Probaj i sa bojom
-        f"{BASE_URL}/us/search?q={model_code}+{color_code}",
+    return None
+
+
+def is_thumbnail(url):
+    """Proverava da li je URL thumbnail (mala slika)."""
+    thumbnail_indicators = [
+        'sw=50', 'sw=80', 'sw=100', 'sw=150', 'sw=200', 'sw=300',
+        'sh=50', 'sh=80', 'sh=100', 'sh=150', 'sh=200', 'sh=300',
+        'thumb', 'small', 'mini', '_xs', '_sm'
     ]
-    
-    for search_url in search_urls:
-        try:
-            r = session.get(search_url, headers=HEADERS, timeout=15)
-            if r.status_code != 200:
-                continue
-            
-            soup = BeautifulSoup(r.text, "html.parser")
-            
-            # Traži link koji sadrži model I boju
-            for a in soup.find_all("a", href=True):
-                href = a["href"]
-                href_lower = href.lower()
-                
-                # Prioritet: linkovi koji imaju i model i boju
-                if model_code.lower() in href_lower and color_code.lower() in href_lower:
-                    if href.startswith("http"):
-                        pdp_url = href
-                    elif href.startswith("/"):
-                        pdp_url = BASE_URL + href
-                    else:
-                        pdp_url = BASE_URL + "/" + href
-                    
-                    pdp_r = session.get(pdp_url, headers=HEADERS, timeout=15)
-                    if pdp_r.status_code == 200:
-                        return (pdp_url, pdp_r.text)
-            
-            # Ako nema sa bojom, probaj samo model
-            for a in soup.find_all("a", href=True):
-                href = a["href"]
-                if model_code.lower() in href.lower():
-                    if href.startswith("http"):
-                        pdp_url = href
-                    elif href.startswith("/"):
-                        pdp_url = BASE_URL + href
-                    else:
-                        pdp_url = BASE_URL + "/" + href
-                    
-                    pdp_r = session.get(pdp_url, headers=HEADERS, timeout=15)
-                    if pdp_r.status_code == 200 and color_code.lower() in pdp_r.text.lower():
-                        return (pdp_url, pdp_r.text)
-                        
-        except:
-            pass
-        time.sleep(0.1)
-    
-    return (None, None)
-
-
-def is_thumbnail(url: str) -> bool:
-    """Proverava da li je thumbnail"""
-    indicators = ['sw=50', 'sw=80', 'sw=100', 'sw=150', 'sw=200', 'sw=300',
-                  'sh=50', 'sh=80', 'sh=100', 'sh=150', 'sh=200', 'sh=300']
-    return any(ind in url.lower() for ind in indicators)
-
-
-def is_product_image(url: str, model_code: str, color_code: str) -> bool:
-    """
-    Proverava da li je URL slika PROIZVODA za TAČNU BOJU.
-    
-    Vraća True samo ako:
-    1. URL sadrži 'dw/image' (DSQUARED2 image CDN)
-    2. URL sadrži model code
-    3. URL sadrži color code (BITNO!)
-    4. Nije thumbnail
-    """
     url_lower = url.lower()
-    
-    # Mora biti sa image CDN-a
-    if 'dw/image' not in url_lower:
-        return False
-    
-    # Mora sadržati model
-    if model_code.lower() not in url_lower:
-        return False
-    
-    # MORA sadržati boju - OVO JE KLJUČNO!
-    if color_code.lower() not in url_lower:
-        return False
-    
-    # Ne sme biti thumbnail
-    if is_thumbnail(url):
-        return False
-    
-    # Izbaci poznate non-product slike
-    bad_patterns = ['logo', 'banner', 'icon', 'sprite', 'placeholder', 'loading']
-    if any(bad in url_lower for bad in bad_patterns):
-        return False
-    
-    return True
+    return any(indicator in url_lower for indicator in thumbnail_indicators)
 
 
-def convert_to_high_res(url: str) -> str:
-    """Konvertuje URL u high-res verziju"""
-    return url.split("?")[0] + HIGH_RES_PARAMS
+def convert_to_high_res(url):
+    """Konvertuje URL slike u high-resolution verziju."""
+    base_url = url.split("?")[0]
+    return base_url + HIGH_RES_PARAMS
 
 
-def extract_images(html: str, model_code: str, color_code: str, max_images: int = 5) -> list:
+def extract_image_urls_from_pdp(html_text, original_code, max_images=5):
     """
-    Izvlači high-res image URL-ove SAMO ZA TAČNU BOJU.
+    Parsira PDP i skuplja sve image URL-ove koji sadrže original_code.
+    Vraća listu HIGH-RES URL-ova.
     """
-    soup = BeautifulSoup(html, "html.parser")
+    soup = BeautifulSoup(html_text, "html.parser")
     urls = []
-    seen = set()
-    
-    # 1) <img src=...>
+    seen_bases = set()
+
+    # 1) Traži sve tagove <img src=...> koji u src imaju original code
     for img in soup.find_all("img", src=True):
         src = img["src"]
-        if src.startswith("//"):
-            src = "https:" + src
-        
-        if is_product_image(src, model_code, color_code):
+        if original_code.lower() in src.lower() or "dw/image" in src:
+            if src.startswith("//"):
+                src = "https:" + src
+
+            if is_thumbnail(src):
+                continue
+
             base = src.split("?")[0]
-            if base not in seen:
-                seen.add(base)
+            if base not in seen_bases:
+                seen_bases.add(base)
                 urls.append(convert_to_high_res(src))
-    
-    # 2) data-src (lazy loading)
+
+    # 2) Traži data-src atribute (lazy loading slike)
     for img in soup.find_all("img", attrs={"data-src": True}):
         src = img["data-src"]
-        if src.startswith("//"):
-            src = "https:" + src
-        
-        if is_product_image(src, model_code, color_code):
+        if original_code.lower() in src.lower() or "dw/image" in src:
+            if src.startswith("//"):
+                src = "https:" + src
+
+            if is_thumbnail(src):
+                continue
+
             base = src.split("?")[0]
-            if base not in seen:
-                seen.add(base)
+            if base not in seen_bases:
+                seen_bases.add(base)
                 urls.append(convert_to_high_res(src))
-    
-    # 3) srcset
+
+    # 3) Traži srcset atribute
     for img in soup.find_all("img", attrs={"srcset": True}):
         srcset = img["srcset"]
         parts = srcset.split(",")
         for part in parts:
             part = part.strip()
-            src = part.split()[0]
-            if src.startswith("//"):
-                src = "https:" + src
-            
-            if is_product_image(src, model_code, color_code):
+            if original_code.lower() in part.lower():
+                src = part.split()[0]
+                if src.startswith("//"):
+                    src = "https:" + src
+
                 base = src.split("?")[0]
-                if base not in seen:
-                    seen.add(base)
+                if base not in seen_bases:
+                    seen_bases.add(base)
                     urls.append(convert_to_high_res(src))
-    
+
     # 4) Regex fallback u HTML-u
     if len(urls) < max_images:
-        # Traži sve URL-ove slika u HTML-u
-        found = re.findall(r'https?://[^"\']+dw/image/[^"\']+', html)
+        found = re.findall(r'https?://[^"\']+dw/image/[^"\']+', html_text)
         for f in found:
-            if is_product_image(f, model_code, color_code):
+            if original_code.lower() in f.lower():
+                if is_thumbnail(f):
+                    continue
+
                 base = f.split("?")[0]
-                if base not in seen:
-                    seen.add(base)
+                if base not in seen_bases:
+                    seen_bases.add(base)
                     urls.append(convert_to_high_res(f))
-    
+
+    # 5) Traži linkove u <a href>
+    for a in soup.find_all("a", href=True):
+        href = a["href"]
+        if original_code.lower() in href.lower() and ("dw/image" in href or ".jpg" in href.lower()):
+            if href.startswith("//"):
+                href = "https:" + href
+            if href.startswith("/"):
+                href = BASE_URL + href
+
+            if is_thumbnail(href):
+                continue
+
+            base = href.split("?")[0]
+            if base not in seen_bases:
+                seen_bases.add(base)
+                urls.append(convert_to_high_res(href))
+
     return urls[:max_images]
+
+
+def find_product_page(original_code):
+    """
+    Pronalazi product page za dati original code.
+    Vraća (pdp_url, html_content) ili (None, None)
+    """
+    # 1) Pokušaj direktne URL-ove
+    candidate_urls = [
+        f"{BASE_URL}/us/{original_code}.html",
+        f"{BASE_URL}/us/{original_code.lower()}.html",
+        f"{BASE_URL}/{original_code}.html",
+    ]
+
+    for url in candidate_urls:
+        r = request_url(url)
+        if r and original_code.lower() in r.text.lower():
+            return (url, r.text)
+        time.sleep(0.05)
+
+    # 2) Fallback: search
+    pdp = find_pdp_by_original(original_code)
+    if pdp:
+        r = request_url(pdp)
+        if r:
+            return (pdp, r.text)
+
+    return (None, None)
 
 
 # ============================================
@@ -247,68 +234,80 @@ def extract_images(html: str, model_code: str, color_code: str, max_images: int 
 def scrape(sku: str, max_images: int = 5, validate: bool = False) -> dict:
     """
     Glavna funkcija za scraping DSQUARED2 proizvoda.
-    
+
     Args:
         sku: Fashion Company Code (npr. "DQS71GD1572-205")
         max_images: Maksimalan broj slika
         validate: Da li da validira URL-ove (sporije)
-    
+
     Returns:
         dict sa sku, formatted_sku, images, count, landing_page
     """
+    # Formatiraj SKU
+    formatted_sku = sku.strip().upper()
+    if not formatted_sku.startswith("DQ"):
+        formatted_sku = f"DQ{formatted_sku}"
+
     # Izvuci MODEL i BOJU
-    model_code = extract_model_code(sku)
-    color_code = extract_color_code(sku)
-    
-    # Formatiraj SKU za imenovanje fajlova
-    formatted_sku = sku if sku.startswith("DQ") else f"DQ{sku}"
-    
+    model_code = extract_model_code(formatted_sku)
+    color_code = extract_color_code(formatted_sku)
+
+    # Proveri lookup tabelu za full original code
+    full_original = get_full_code(formatted_sku)
+    in_lookup = full_original is not None
+
     result = {
         "sku": sku,
         "formatted_sku": formatted_sku,
         "model_code": model_code,
         "color_code": color_code,
+        "full_original": full_original,
+        "in_lookup": in_lookup,
         "landing_page": "",
         "images": [],
         "count": 0,
         "error": None
     }
-    
+
     # Proveri da li imamo boju
     if not color_code:
         result["error"] = f"No color code found in SKU: {sku}"
         return result
-    
+
+    # Proveri da li imamo full_original iz lookup tabele
+    if not full_original:
+        result["error"] = f"SKU not in lookup table: {formatted_sku}"
+        return result
+
     # Pronađi product page
-    session = requests.Session()
-    pdp_url, html = find_product_page(model_code, color_code, session)
-    
+    pdp_url, html = find_product_page(full_original)
+
     if not pdp_url or not html:
-        result["error"] = f"Product page not found for {model_code} color {color_code}"
+        result["error"] = f"Product page not found for {full_original}"
         return result
-    
+
     result["landing_page"] = pdp_url
-    
-    # Izvuci slike SAMO ZA OVU BOJU
-    image_urls = extract_images(html, model_code, color_code, max_images)
-    
+
+    # Izvuci slike
+    image_urls = extract_image_urls_from_pdp(html, full_original, max_images)
+
     if not image_urls:
-        result["error"] = f"No images found for color {color_code}"
+        result["error"] = f"No images found for {full_original}"
         return result
-    
+
     # Validiraj ako treba
     if validate:
         valid_urls = []
         for url in image_urls:
             try:
-                r = session.head(url, headers=HEADERS, timeout=10)
+                r = requests.head(url, headers=HEADERS, timeout=10)
                 if r.status_code == 200:
                     valid_urls.append(url)
             except:
                 pass
             time.sleep(0.1)
         image_urls = valid_urls
-    
+
     # Kreiraj image objekte
     for idx, url in enumerate(image_urls, 1):
         result["images"].append({
@@ -316,9 +315,9 @@ def scrape(sku: str, max_images: int = 5, validate: bool = False) -> dict:
             "filename": f"{formatted_sku}-{idx}",
             "index": idx
         })
-    
+
     result["count"] = len(result["images"])
-    
+
     return result
 
 
@@ -327,28 +326,26 @@ def scrape(sku: str, max_images: int = 5, validate: bool = False) -> dict:
 # ============================================
 
 if __name__ == "__main__":
-    # Test sa različitim bojama istog modela
     test_skus = [
-        "DQS71GD1572-205",    # Boja 205
-        "DQS74GD1456-100",    # Boja 100
-        "DQS74GD1456-900",    # Boja 900 (isti model, druga boja!)
-        "DQS74GU0894-860M",   # Boja sa slovom
+        "DQS71GD1609-100",
+        "DQS74GD1456-100",
+        "DQS74GD1456-900",
+        "DQS74GU0894-860M",
     ]
-    
+
     for sku in test_skus:
         print(f"\n{'='*60}")
         print(f"Testing: {sku}")
         print(f"{'='*60}")
-        
+
         result = scrape(sku, max_images=5, validate=False)
-        
-        print(f"Model: {result['model_code']}")
-        print(f"Color: {result['color_code']}")
-        print(f"Landing page: {result['landing_page']}")
-        print(f"Images found: {result['count']}")
-        
-        if result['error']:
+
+        print(f"Full original: {result.get('full_original')}")
+        print(f"Landing page: {result.get('landing_page')}")
+        print(f"Images found: {result.get('count')}")
+
+        if result.get('error'):
             print(f"Error: {result['error']}")
-        
-        for img in result['images']:
+
+        for img in result.get('images', [])[:3]:
             print(f"  {img['filename']}: {img['url'][:70]}...")
