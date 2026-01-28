@@ -1,133 +1,61 @@
 """
-Levi's Scraper - Scene7 CDN (FIXED)
+Levi's Scraper - Scene7 CDN (ULTRA FAST)
 Endpoint: /scrape-levis
 
-URL Format: https://lscoglobal.scene7.com/is/image/lscoglobal/{PREFIX}_{SKU}_{MIDDLE}{VIEW}
-Example: MB_000LO-0033_GLO_CM_DA
-"""
+NO VALIDATION - just generates URLs with all prefix combinations.
+Workflow API validates during download (same as other brands).
 
-import requests
-from concurrent.futures import ThreadPoolExecutor, as_completed
+URL Format: https://lscoglobal.scene7.com/is/image/lscoglobal/{PREFIX}_{SKU}_{MIDDLE}{VIEW}
+"""
 
 # Config
 BASE_URL = "https://lscoglobal.scene7.com/is/image/lscoglobal"
 QS = "?fmt=webp&qlt=70&resMode=sharp2&fit=crop,1&op_usm=0.6,0.6,8&wid=1760&hei=1760"
-HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
-MIN_VALID_BYTES = 10000
-TIMEOUT = 10
-MAX_WORKERS = 8
 
-# Prefixes to try (gender + category combinations)
-PREFIXES = ["MB_", "MT_", "WB_", "WT_", "UB_", "UT_", "A_", ""]
+# Most common prefixes (ordered by likelihood for Levi's - jeans dominant)
+PREFIXES = ["MB_", "WB_", "MT_", "WT_"]
 
-# Middle parts (region + type)
-MIDDLES = ["GLO_CM_", "GLO_CL_", "LSE_CL_", "LSE_CM_"]
+# Most common middle
+MIDDLE = "GLO_CM_"
 
-# View suffixes (in priority order)
-VIEWS = ["DA", "FV", "BV", "SV", "D1", "D2", "D3"]
+# View suffixes
+VIEWS = ["DA", "FV", "BV", "SV", "D1"]
 
 
 def convert_sku(sku):
-    """
-    Convert SKU - keep the dash!
-    LV000LO-0033 -> 000LO-0033
-    """
+    """Convert SKU - keep the dash! LV000LO-0033 -> 000LO-0033"""
     code = sku.strip().upper()
     if code.startswith("LV"):
         code = code[2:]
     return code
 
 
-def check_url_head(url):
-    """Fast HEAD check - doesn't download image"""
-    try:
-        r = requests.head(url, headers=HEADERS, timeout=5)
-        if r.status_code == 200:
-            # Check content-length header
-            content_length = int(r.headers.get('content-length', 0))
-            if content_length > MIN_VALID_BYTES:
-                return True
-    except:
-        pass
-    return False
-
-
-def check_url_head_parallel(args):
-    """For parallel HEAD checking - much faster"""
-    url, idx = args
-    try:
-        r = requests.head(url, headers=HEADERS, timeout=5)
-        if r.status_code == 200:
-            content_length = int(r.headers.get('content-length', 0))
-            if content_length > MIN_VALID_BYTES:
-                return (idx, url, True)
-    except:
-        pass
-    return (idx, url, False)
-
-
-def find_working_combo(sku_code):
-    """
-    Find which prefix + middle combination works for this SKU.
-    Uses parallel requests to speed up discovery.
-    """
-    # Build all combinations to test (first view only)
-    combos_to_test = []
-    idx = 0
-    for prefix in PREFIXES:
-        for middle in MIDDLES:
-            url = f"{BASE_URL}/{prefix}{sku_code}_{middle}DA{QS}"
-            combos_to_test.append((url, idx, prefix, middle))
-            idx += 1
-
-    # Test in parallel using fast HEAD requests
-    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-        futures = {
-            executor.submit(check_url_head_parallel, (c[0], c[1])): c
-            for c in combos_to_test
-        }
-        for future in as_completed(futures):
-            combo = futures[future]
-            _, _, is_valid = future.result()
-            if is_valid:
-                return (combo[2], combo[3])  # prefix, middle
-
-    return (None, None)
-
-
 def scrape_levis(sku, max_images=5):
     """
-    Scrape Levi's product images from Scene7 CDN
+    ULTRA FAST Levi's scraper - NO HTTP requests!
 
-    FAST VERSION: Only validates prefix/middle combo, then generates URLs.
-    Workflow API will validate during download step.
+    Generates URLs for all common prefix combinations.
+    Workflow API will filter invalid ones during download.
 
-    Args:
-        sku: Product SKU (e.g., "LV000LO-0033")
-        max_images: Maximum number of images to return
-
-    Returns:
-        dict with 'images' list containing image URLs
+    Returns up to max_images * len(PREFIXES) URLs for workflow to try.
     """
     sku_code = convert_sku(sku)
 
     if not sku_code:
         return {"sku": sku, "images": [], "count": 0, "error": "Invalid SKU format"}
 
-    # Find working prefix/middle combo (only validation needed)
-    prefix, middle = find_working_combo(sku_code)
-
-    if prefix is None:
-        return {"sku": sku, "images": [], "count": 0, "error": f"No images found for {sku_code}"}
-
-    # Generate URLs for all views - NO validation, workflow will filter
+    # Generate URLs for all prefixes - workflow will filter
     images = []
-    for i, view in enumerate(VIEWS[:max_images]):
-        url = f"{BASE_URL}/{prefix}{sku_code}_{middle}{view}{QS}"
-        images.append({
-            "url": url,
-            "index": i + 1
-        })
+    idx = 1
+
+    for prefix in PREFIXES:
+        for view in VIEWS[:max_images]:
+            url = f"{BASE_URL}/{prefix}{sku_code}_{MIDDLE}{view}{QS}"
+            images.append({
+                "url": url,
+                "index": idx
+            })
+            idx += 1
 
     return {
         "sku": sku,
