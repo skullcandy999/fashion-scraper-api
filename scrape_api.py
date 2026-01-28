@@ -1172,7 +1172,7 @@ def scrape_replay():
             match = re.match(r'^([A-Z0-9]+)\s*\{([^}]+)\}(.+)$', s)
             if match:
                 model = match.group(1)
-                fabric = match.group(2).replace(' ', '')  # Remove spaces from fabric
+                fabric = match.group(2).replace(' ', '-')  # Replace spaces with dash
                 color = match.group(3).strip()
                 # Return list of codes to try (000 and 001)
                 return [
