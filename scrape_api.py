@@ -996,11 +996,12 @@ def scrape_armani_exchange():
         return jsonify({"error": str(e)}), 500
 
 
-# ===================== MICHAEL KORS (PARALLEL CDN) =====================
+# ===================== MICHAEL KORS (WEBSITE SCRAPING) =====================
 @app.route('/scrape-michael-kors', methods=['POST'])
 def scrape_michael_kors():
-    """MICHAEL KORS - Scene7 CDN with color variants - PARALLEL"""
+    """MICHAEL KORS - website scraping from michaelkors.ae (no proxy needed)"""
     try:
+        from scrapers import michael_kors
         data = request.json
         sku = data.get('sku', '').strip().upper()
         max_images = data.get('max_images', 5)
@@ -1008,48 +1009,10 @@ def scrape_michael_kors():
         if not sku:
             return jsonify({"error": "SKU required"}), 400
 
-        parts = sku.split('-')
-        if len(parts) != 2:
-            return jsonify({"error": f"Invalid SKU format: {sku}"}), 400
-
-        code_part = parts[0]
-        color = parts[1]
-
-        # Remove MC prefix
-        if code_part.startswith('MC'):
-            model = code_part[2:]
-        else:
-            model = code_part
-
-        # Color variants - add leading zeros (MK uses 4-digit internal codes)
-        # SKU 251 → try 0251, 251, 00251
-        color_variants = [
-            f"0{color}",           # Add one leading zero
-            color,                  # Original
-            color.zfill(4),         # Pad to 4 digits
-            color.lstrip('0') or '0',  # Strip leading zeros
-        ]
-        color_variants = list(set(color_variants))
-
-        # Build Scene7 URLs
-        url_list = []
-        for clr in color_variants:
-            for i in range(1, 9):
-                # Format: {model}-{color}_{position}
-                url = f"https://michaelkors.scene7.com/is/image/MichaelKors/{model}-{clr}_{i}?$large$"
-                url_list.append((url, {"color": clr, "position": i}))
-
-        # Validate in parallel
-        images = validate_urls_parallel(url_list, max_images=max_images, min_bytes=5000)
-
-        # Get working color from first image
-        working_color = images[0].get("color") if images else color
-
-        for idx, img in enumerate(images):
-            img["index"] = idx + 1
-            img["filename"] = f"{sku.replace('-', '_')}-{idx + 1}.jpg"
-
-        return jsonify({"sku": sku, "brand_code": f"{model}-{working_color}", "images": images, "count": len(images)})
+        result = michael_kors.scrape(sku, max_images)
+        return jsonify(result)
+    except ImportError:
+        return jsonify({"error": "Michael Kors scraper module not found"}), 500
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
