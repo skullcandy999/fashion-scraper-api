@@ -26,7 +26,7 @@ CORS(app)
 # ===================== CONSTANTS =====================
 TIMEOUT = 10
 MIN_BYTES = 8000
-MAX_VALIDATION_WORKERS = 30  # Parallel workers - fast batch processing
+MAX_VALIDATION_WORKERS = 15  # Parallel workers - fast batch processing
 
 # ===================== HTTP SESSION =====================
 def make_session(headers=None):
