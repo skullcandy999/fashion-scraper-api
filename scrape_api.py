@@ -1021,35 +1021,72 @@ def scrape_patrizia_pepe():
         return jsonify({"error": str(e)}), 500
 
 
-# ===================== SANDRO (PARALLEL) =====================
+# ===================== SANDRO (PARALLEL - Multi-CDN) =====================
 @app.route('/scrape-sandro', methods=['POST'])
 def scrape_sandro():
-    """SANDRO - 6 sufiksa - PARALLEL"""
+    """SANDRO - Shopify + Global DW + EU DW - H/F/V sufiksi - PARALLEL"""
     try:
         data = request.json
         sku = data.get('sku', '').strip()
         max_images = data.get('max_images', 5)
-        
+
         if not sku:
             return jsonify({"error": "SKU required"}), 400
-        
+
         code = sku[2:] if sku.startswith('SA') else sku
-        
-        BASE = "https://eu.sandro-paris.com/dw/image/v2/BCMW_PRD/on/demandware.static/-/Sites-master-catalog/default/images/hi-res/"
-        SUFFIXES = ["F_1", "F_2", "F_3", "F_4", "F_5"]
-        
-        # Build all URLs
-        url_list = [(f"{BASE}Sandro_{code}_{suffix}.jpg?sw=2000&sh=2000", {"suffix": suffix, "type": "model"}) for suffix in SUFFIXES]
-        # Packshot
-        url_list.append((f"https://eu.sandro-paris.com/dw/image/v2/BCMW_PRD/on/demandware.static/-/Sites-master-catalog/default/images/packshot/Sandro_{code}_F_P.jpg?sw=2000&sh=2000", {"suffix": "F_P", "type": "packshot"}))
-        
+
+        url_list = []
+        H_SUFFIXES = ["H_1", "H_2", "H_3", "H_4", "H_5"]
+        F_SUFFIXES = ["F_1", "F_2", "F_3", "F_4", "F_5"]
+
+        # 1) Shopify CDN - sandro.ae
+        SHOPIFY = "https://www.sandro.ae/cdn/shop/files/"
+        for suffix in H_SUFFIXES:
+            url_list.append((f"{SHOPIFY}Sandro_{code}_{suffix}.webp?width=2048", {"suffix": suffix, "type": "model"}))
+            url_list.append((f"{SHOPIFY}Sandro_{code}_{suffix}.jpg?width=2048", {"suffix": suffix, "type": "model"}))
+        url_list.append((f"{SHOPIFY}Sandro_{code}_H_P.webp?width=2048", {"suffix": "H_P", "type": "packshot"}))
+        url_list.append((f"{SHOPIFY}Sandro_{code}_V_P.webp?width=2048", {"suffix": "V_P", "type": "packshot"}))
+
+        # 2) Global Demandware - global.sandro-paris.com (H sufiksi, BCMW_STG)
+        GLOBAL_HI = "https://global.sandro-paris.com/dw/image/v2/BCMW_STG/on/demandware.static/-/Sites-master-catalog/default/images/hi-res/"
+        GLOBAL_PK = "https://global.sandro-paris.com/dw/image/v2/BCMW_STG/on/demandware.static/-/Sites-master-catalog/default/images/packshot/"
+        for suffix in H_SUFFIXES:
+            url_list.append((f"{GLOBAL_HI}Sandro_{code}_{suffix}.jpg?sw=2000&sh=2000", {"suffix": suffix, "type": "model"}))
+        url_list.append((f"{GLOBAL_PK}Sandro_{code}_H_P.jpg?sw=2000&sh=2000", {"suffix": "H_P", "type": "packshot"}))
+        url_list.append((f"{GLOBAL_PK}Sandro_{code}_V_P.jpg?sw=2000&sh=2000", {"suffix": "V_P", "type": "packshot"}))
+
+        # 3) EU Demandware - eu.sandro-paris.com (F sufiksi, BCMW_PRD)
+        EU_HI = "https://eu.sandro-paris.com/dw/image/v2/BCMW_PRD/on/demandware.static/-/Sites-master-catalog/default/images/hi-res/"
+        EU_PK = "https://eu.sandro-paris.com/dw/image/v2/BCMW_PRD/on/demandware.static/-/Sites-master-catalog/default/images/packshot/"
+        for suffix in F_SUFFIXES:
+            url_list.append((f"{EU_HI}Sandro_{code}_{suffix}.jpg?sw=2000&sh=2000", {"suffix": suffix, "type": "model"}))
+        url_list.append((f"{EU_PK}Sandro_{code}_F_P.jpg?sw=2000&sh=2000", {"suffix": "F_P", "type": "packshot"}))
+
+        # 4) EU Demandware sa H sufiksima (ponekad rade)
+        for suffix in H_SUFFIXES:
+            url_list.append((f"{EU_HI}Sandro_{code}_{suffix}.jpg?sw=2000&sh=2000", {"suffix": suffix, "type": "model"}))
+        url_list.append((f"{EU_PK}Sandro_{code}_H_P.jpg?sw=2000&sh=2000", {"suffix": "H_P", "type": "packshot"}))
+        url_list.append((f"{EU_PK}Sandro_{code}_V_P.jpg?sw=2000&sh=2000", {"suffix": "V_P", "type": "packshot"}))
+
+        # 5) US Demandware - us.sandro-paris.com
+        US_HI = "https://us.sandro-paris.com/dw/image/v2/BCMW_PRD/on/demandware.static/-/Sites-master-catalog/default/images/hi-res/"
+        for suffix in H_SUFFIXES:
+            url_list.append((f"{US_HI}Sandro_{code}_{suffix}.jpg?sw=2000&sh=2000", {"suffix": suffix, "type": "model"}))
+        for suffix in F_SUFFIXES:
+            url_list.append((f"{US_HI}Sandro_{code}_{suffix}.jpg?sw=2000&sh=2000", {"suffix": suffix, "type": "model"}))
+
+        # 6) UK Demandware - uk.sandro-paris.com
+        UK_HI = "https://uk.sandro-paris.com/dw/image/v2/BCMW_PRD/on/demandware.static/-/Sites-master-catalog/default/images/hi-res/"
+        for suffix in H_SUFFIXES:
+            url_list.append((f"{UK_HI}Sandro_{code}_{suffix}.jpg?sw=2000&sh=2000", {"suffix": suffix, "type": "model"}))
+
         # Validate in parallel
         images = validate_urls_parallel(url_list, max_images=max_images)
-        
+
         for idx, img in enumerate(images):
             img["index"] = idx + 1
             img["filename"] = f"{sku.replace('-', '_')}-{idx + 1}"
-        
+
         return jsonify({"sku": sku, "brand_code": code, "images": images, "count": len(images)})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
